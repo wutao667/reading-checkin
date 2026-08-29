@@ -3,6 +3,7 @@
 学生阅读打卡系统：每天中文朗读录音 5 分钟 + 英文朗读录音 5 分钟，家长后台可查看记录并在线播放音频。
 
 - 线上地址：https://dk.huaguo.site （备用：https://daka.huaguo.site ，测试：https://test.huaguo.site ）
+- 代码已在 GitHub 公共仓库。
 
 ---
 
@@ -21,7 +22,7 @@
 
 部署相关（不在本项目目录）：
 - systemd 服务：`/etc/systemd/system/checkin.service`（User=wutao，`sudo systemctl restart checkin`）
-- Caddy 配置：`/etc/caddy/Caddyfile` 中 `dk.huaguo.site` / `daka.huaguo.site` / `test.huaguo.site` 三个站点反代到 `127.0.0.1:3110`
+- Caddy 配置：`/etc/caddy/Caddyfile` 中 `dk.huaguo.site` / `daka.huaguo.site` 反代到 `127.0.0.1:3110`，`test.huaguo.site` 反代到 `127.0.0.1:3111`
 - 运行用户：wutao（工作目录 `/home/wutao/checkin-site`）
 
 ---
@@ -41,7 +42,7 @@
 > ⚠️ **未实现（需求确认过「两种都要」）**：目前只有浏览器直接录制，**「上传已有音频文件」功能还没做**，需要补一个文件上传入口（后端 `/api/audio` 已支持任意音频格式 raw body 上传，前端加 `<input type="file">` 即可）。
 
 ### 后台（家长端）
-1. **密码登录**：admin（初始密码 admin2026，建议登录后修改）。
+1. **密码登录**：admin（初始密码由部署环境注入或首次启动时随机生成，建议登录后修改）。
 2. **筛选**：全部/单个学生 + 日期范围（快捷：本周/本月）。
 3. **记录列表**：日期、学生、中文时长/时间、英文时长/时间、状态（完整/一半/未打卡）、播放按钮。
 4. **在线播放**：底部播放器，点击「▶ 中文 / ▶ 英文」播放对应录音。
@@ -93,7 +94,27 @@ checkins: id, user_id, date(YYYY-MM-DD), cn_path, cn_duration, cn_uploaded_at,
 
 ---
 
-## 四、常用操作
+## 四、双环境部署
+
+- **正式环境**：`dk.huaguo.site` / `daka.huaguo.site` 反代到 `127.0.0.1:3110`，使用默认 `data/` 和 `uploads/` 目录。
+- **测试环境**：`test.huaguo.site` 反代到 `127.0.0.1:3111`，设置 `PORT=3111`、`DATA_DIR=test-data`、`UPLOAD_DIR=test-uploads`，与正式环境数据隔离。
+- `DATA_DIR` 和 `UPLOAD_DIR` 均支持绝对路径；相对路径以项目根目录为基准。不设置时分别默认为 `data` 和 `uploads`。
+
+初始账号为 wuyou、wushuang、admin。部署时通过环境变量 `SEED_WUYOU_PASSWORD` / `SEED_WUSHUANG_PASSWORD` / `SEED_ADMIN_PASSWORD` 注入，未设置则启动时随机生成并打印到日志（仅首次播种时输出）。
+
+正式环境示例：
+
+```bash
+PORT=3110 SEED_WUYOU_PASSWORD='<密码>' SEED_WUSHUANG_PASSWORD='<密码>' SEED_ADMIN_PASSWORD='<密码>' node server.js
+```
+
+测试环境示例：
+
+```bash
+PORT=3111 DATA_DIR=test-data UPLOAD_DIR=test-uploads SEED_WUYOU_PASSWORD='<测试密码>' SEED_WUSHUANG_PASSWORD='<测试密码>' SEED_ADMIN_PASSWORD='<测试密码>' node server.js
+```
+
+## 五、常用操作
 
 ```bash
 # 启动/重启/查看服务
@@ -113,5 +134,3 @@ sudo systemctl status checkin
 # 测试 API（本地）
 curl -s -X POST http://127.0.0.1:3110/api/student-login -H 'Content-Type: application/json' -d '{"username":"wuyou"}'
 ```
-
-初始账号：wuyou/wuyou2026、wushuang/wushuang2026、admin/admin2026（学生免密后密码备用）。

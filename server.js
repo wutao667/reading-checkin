@@ -8,8 +8,9 @@ const { DatabaseSync } = require('node:sqlite');
 const PORT = process.env.PORT || 3110;
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
-const DATA = path.join(ROOT, 'data');
-const UPLOADS = path.join(ROOT, 'uploads');
+const resolveFromRoot = value => path.isAbsolute(value) ? value : path.join(ROOT, value);
+const DATA = resolveFromRoot(process.env.DATA_DIR || 'data');
+const UPLOADS = resolveFromRoot(process.env.UPLOAD_DIR || 'uploads');
 const DB_PATH = path.join(DATA, 'app.db');
 
 const AUDIO_RETENTION_DAYS = 90;      // 音频保留 3 个月
@@ -154,17 +155,18 @@ function needAdmin(req, res) {
   const row = db.prepare('SELECT COUNT(*) c FROM users').get();
   if (row.c === 0) {
     const seed = [
-      ['wuyou', '无花果', 'student'],
-      ['wushuang', '妹妹', 'student'],
-      ['admin', '涛哥', 'admin'],
+      ['wuyou', '无花果', 'student', 'SEED_WUYOU_PASSWORD'],
+      ['wushuang', '妹妹', 'student', 'SEED_WUSHUANG_PASSWORD'],
+      ['admin', '涛哥', 'admin', 'SEED_ADMIN_PASSWORD'],
     ];
     const ins = db.prepare('INSERT INTO users (username, password, salt, name, role) VALUES (?, ?, ?, ?, ?)');
-    seed.forEach(([u, name, role]) => {
+    seed.forEach(([u, name, role, passwordEnv]) => {
       const salt = crypto.randomBytes(8).toString('hex');
-      const pw = u === 'wuyou' ? 'wuyou2026' : u === 'wushuang' ? 'wushuang2026' : 'admin2026';
+      const pw = process.env[passwordEnv] || crypto.randomBytes(12).toString('base64url');
       ins.run(u, hashPassword(pw, salt), salt, name, role);
+      if (!process.env[passwordEnv]) console.log(`[init] 初始账号 ${u} 随机密码: ${pw}`);
     });
-    console.log('[init] 已创建初始账号: wuyou / wushuang / admin（初始密码 wuyou2026 / wushuang2026 / admin2026）');
+    console.log('[init] 已创建初始账号: wuyou / wushuang / admin');
   }
 }
 
@@ -451,6 +453,8 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`✅ 阅读打卡服务已启动: http://127.0.0.1:${PORT}`);
   console.log(`   Web 根目录: ${PUBLIC}`);
+  console.log(`   数据目录: ${DATA}`);
+  console.log(`   上传目录: ${UPLOADS}`);
   console.log(`   音频保留: ${AUDIO_RETENTION_DAYS} 天`);
   cleanupOldAudio();
   setInterval(cleanupOldAudio, 6 * 3600 * 1000);
