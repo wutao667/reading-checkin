@@ -99,6 +99,7 @@ checkins: id, user_id, date(YYYY-MM-DD), cn_path, cn_duration, cn_uploaded_at,
 - **正式环境**：`dk.huaguo.site` / `daka.huaguo.site` 反代到 `127.0.0.1:3110`，使用默认 `data/` 和 `uploads/` 目录。
 - **测试环境**：`test.huaguo.site` 反代到 `127.0.0.1:3111`，设置 `PORT=3111`、`DATA_DIR=test-data`、`UPLOAD_DIR=test-uploads`，与正式环境数据隔离。
 - `DATA_DIR` 和 `UPLOAD_DIR` 均支持绝对路径；相对路径以项目根目录为基准。不设置时分别默认为 `data` 和 `uploads`。
+- 服务依赖 `ffmpeg` 修复 webm 录音的时长元数据；当前 systemd 服务的 `PATH` 已包含 ffmpeg，无需额外配置。其他环境若找不到命令，可在服务中补充 `Environment=PATH=...`，或通过 `FFMPEG_PATH` 指定可执行文件路径。
 
 初始账号为 wuyou、wushuang、admin。部署时通过环境变量 `SEED_WUYOU_PASSWORD` / `SEED_WUSHUANG_PASSWORD` / `SEED_ADMIN_PASSWORD` 注入，未设置则启动时随机生成并打印到日志（仅首次播种时输出）。
 

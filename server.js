@@ -3,6 +3,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 
 const PORT = process.env.PORT || 3110;
@@ -86,6 +87,51 @@ function readBody(req, limit) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+function fixWebmDuration(filePath) {
+  if (path.extname(filePath).toLowerCase() !== '.webm') return Promise.resolve(false);
+
+  const tempPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp.webm`;
+  return new Promise(resolve => {
+    execFile(process.env.FFMPEG_PATH || 'ffmpeg', [
+      '-y', '-v', 'error', '-i', filePath, '-c', 'copy', '-f', 'webm', tempPath,
+    ], { timeout: 30000 }, err => {
+      if (err) {
+        fs.unlink(tempPath, () => resolve(false));
+        return;
+      }
+      fs.rename(tempPath, filePath, renameErr => {
+        if (!renameErr) return resolve(true);
+        fs.unlink(tempPath, () => resolve(false));
+      });
+    });
+  });
+}
+
+async function findWebmFiles(dir) {
+  const files = [];
+  let entries;
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch (e) {
+    return files;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...await findWebmFiles(full));
+    else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.webm') files.push(full);
+  }
+  return files;
+}
+
+async function fixExistingWebmDurations() {
+  const files = await findWebmFiles(UPLOADS);
+  let fixed = 0;
+  for (const file of files) {
+    if (await fixWebmDuration(file)) fixed++;
+  }
+  console.log(`[audio] webm 时长扫描完成: ${fixed}/${files.length} 个已修复`);
 }
 
 function parseCookies(req) {
@@ -355,6 +401,7 @@ const server = http.createServer(async (req, res) => {
           try { fs.unlinkSync(path.join(ROOT, oldPath)); } catch (e) {}
         }
         fs.writeFileSync(file, buf);
+        if (ext === 'webm') await fixWebmDuration(file);
 
         const now = new Date().toISOString();
         const colPath = `${lang}_path`, colDur = `${lang}_duration`, colAt = `${lang}_uploaded_at`;
@@ -458,4 +505,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`   音频保留: ${AUDIO_RETENTION_DAYS} 天`);
   cleanupOldAudio();
   setInterval(cleanupOldAudio, 6 * 3600 * 1000);
+  setTimeout(() => {
+    fixExistingWebmDurations().catch(e => console.error('[audio] webm 时长扫描失败:', e.message));
+  }, 3000);
 });
