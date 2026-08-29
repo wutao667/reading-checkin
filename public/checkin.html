@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>阅读打卡</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <h1>📚 阅读打卡</h1>
+    <div class="right"><span id="userName"></span><button class="btn-link" onclick="logout()">退出</button></div>
+  </div>
+  <p style="color:var(--sub); font-size:14px; margin-bottom:14px;">今天 <b id="today"></b> · 每天中文 + 英文各 5 分钟 🎙️</p>
+
+  <!-- 今日状态 -->
+  <div class="card">
+    <h2>🗓️ 今日打卡</h2>
+    <div id="todayStatus" style="font-size:14px; color:var(--sub);">加载中…</div>
+  </div>
+
+  <!-- 中文录音 -->
+  <div class="card rec-card" id="card-cn">
+    <h2>🇨🇳 中文朗读 <span class="status-tag tag-none" id="tag-cn">未打卡</span></h2>
+    <div id="rec-cn-area">
+      <div class="rec-timer" id="timer-cn">0:00</div>
+      <div class="rec-hint" id="hint-cn">点击下方按钮开始录音，5 分钟到会自动停止</div>
+      <div class="rec-actions">
+        <button class="btn btn-orange" id="start-cn">🎙️ 开始录音</button>
+        <button class="btn btn-red hidden" id="stop-cn">⏹️ 停止</button>
+        <button class="btn btn-green hidden" id="save-cn">✅ 保存</button>
+        <button class="btn btn-ghost hidden" id="again-cn">🔄 重录</button>
+      </div>
+      <audio class="rec-audio hidden" id="preview-cn" controls></audio>
+      <div class="rec-saved-info hidden" id="saved-cn"></div>
+    </div>
+  </div>
+
+  <!-- 英文录音 -->
+  <div class="card rec-card" id="card-en">
+    <h2>🇬🇧 English <span class="status-tag tag-none" id="tag-en">未打卡</span></h2>
+    <div id="rec-en-area">
+      <div class="rec-timer" id="timer-en">0:00</div>
+      <div class="rec-hint" id="hint-en">点击下方按钮开始录音，5 分钟到会自动停止</div>
+      <div class="rec-actions">
+        <button class="btn btn-orange" id="start-en">🎙️ Start</button>
+        <button class="btn btn-red hidden" id="stop-en">⏹️ Stop</button>
+        <button class="btn btn-green hidden" id="save-en">✅ Save</button>
+        <button class="btn btn-ghost hidden" id="again-en">🔄 Redo</button>
+      </div>
+      <audio class="rec-audio hidden" id="preview-en" controls></audio>
+      <div class="rec-saved-info hidden" id="saved-en"></div>
+    </div>
+  </div>
+
+  <!-- 本月日历 -->
+  <div class="card">
+    <h2>📅 本月打卡</h2>
+    <div id="calendar"></div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+<script>
+(async () => {
+const MAX_SEC = 300; // 5 分钟
+const user = await guard(false);
+if (!user) return;
+
+async function refreshStatus() {
+  const t = await api('/api/today');
+  const parts = [];
+  const cn = t.cn.saved ? `中文 ✅ ${fmtDur(t.cn.duration)}（${fmtTime(t.cn.uploadedAt)}）` : '中文 ⬜ 未打卡';
+  const en = t.en.saved ? `英文 ✅ ${fmtDur(t.en.duration)}（${fmtTime(t.en.uploadedAt)}）` : '英文 ⬜ 未打卡';
+  document.getElementById('todayStatus').textContent = `${cn} ｜ ${en}`;
+  syncCardState('cn', t.cn);
+  syncCardState('en', t.en);
+}
+
+function syncCardState(lang, st) {
+  const tag = document.getElementById(`tag-${lang}`);
+  const savedInfo = document.getElementById(`saved-${lang}`);
+  if (st.saved) {
+    tag.textContent = '已打卡';
+    tag.className = 'status-tag tag-done';
+    savedInfo.textContent = `已保存 · 时长 ${fmtDur(st.duration)} · ${fmtTime(st.uploadedAt)}（可直接重录覆盖）`;
+    savedInfo.classList.remove('hidden');
+  } else {
+    tag.textContent = '未打卡';
+    tag.className = 'status-tag tag-none';
+    savedInfo.classList.add('hidden');
+  }
+}
+
+// ---------- 录音逻辑 ----------
+const state = {
+  cn: null, en: null
+};
+
+function makeRecorder(lang) {
+  const area = document.getElementById(`rec-${lang}-area`);
+  const timerEl = document.getElementById(`timer-${lang}`);
+  const hintEl = document.getElementById(`hint-${lang}`);
+  const startBtn = document.getElementById(`start-${lang}`);
+  const stopBtn = document.getElementById(`stop-${lang}`);
+  const saveBtn = document.getElementById(`save-${lang}`);
+  const againBtn = document.getElementById(`again-${lang}`);
+  const preview = document.getElementById(`preview-${lang}`);
+  const card = document.getElementById(`card-${lang}`);
+  const tag = document.getElementById(`tag-${lang}`);
+
+  const rec = {
+    lang, stream: null, recorder: null, chunks: [], timerInt: null, autoStop: null,
+    startTs: 0, blob: null, duration: 0, previewUrl: null,
+  };
+  state[lang] = rec;
+
+  function setTag(cls, text) {
+    tag.className = 'status-tag ' + cls;
+    tag.textContent = text;
+  }
+  function show(...btns) {
+    [startBtn, stopBtn, saveBtn, againBtn].forEach(b => b.classList.add('hidden'));
+    btns.forEach(b => b.classList.remove('hidden'));
+  }
+  function fmt(ms) {
+    const s = Math.floor(ms / 1000);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+  function renderTimer() {
+    const elapsed = Date.now() - rec.startTs;
+    timerEl.textContent = fmt(Math.min(elapsed, MAX_SEC * 1000));
+  }
+  function stopTracks() {
+    if (rec.stream) rec.stream.getTracks().forEach(t => t.stop());
+    rec.stream = null;
+  }
+
+  startBtn.addEventListener('click', async () => {
+    try {
+      rec.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      toast('无法使用麦克风，请检查权限设置');
+      return;
+    }
+    const types = ['audio/webm', 'audio/mp4', 'audio/ogg'];
+    let mime = '';
+    for (const t of types) { if (MediaRecorder.isTypeSupported(t)) { mime = t; break; } }
+    rec.chunks = [];
+    rec.recorder = new MediaRecorder(rec.stream, mime ? { mimeType: mime } : undefined);
+    rec.recorder.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+    rec.recorder.onstop = () => {
+      clearInterval(rec.timerInt);
+      stopTracks();
+      rec.blob = new Blob(rec.chunks, { type: rec.recorder.mimeType });
+      rec.duration = Math.round((Date.now() - rec.startTs) / 1000);
+      rec.previewUrl = URL.createObjectURL(rec.blob);
+      preview.src = rec.previewUrl;
+      preview.classList.remove('hidden');
+      timerEl.textContent = fmt(rec.duration * 1000);
+      hintEl.textContent = rec.duration >= 5 ? `录了 ${fmt(rec.duration * 1000)}，听听效果，满意就保存 ✅` : '录音太短了，建议重录哦';
+      show(saveBtn, againBtn);
+      setTag('tag-part', '已录音');
+    };
+    rec.startTs = Date.now();
+    rec.recorder.start();
+    rec.timerInt = setInterval(renderTimer, 250);
+    rec.autoStop = setTimeout(() => { if (rec.recorder && rec.recorder.state === 'recording') rec.recorder.stop(); }, MAX_SEC * 1000);
+    show(stopBtn);
+    setTag('tag-rec', '录音中…');
+    hintEl.textContent = `录音进行中，5:00 自动停止 · 请大声朗读 🗣️`;
+    timerEl.style.color = 'var(--red)';
+  });
+
+  stopBtn.addEventListener('click', () => {
+    clearTimeout(rec.autoStop);
+    if (rec.recorder && rec.recorder.state !== 'inactive') rec.recorder.stop();
+  });
+
+  againBtn.addEventListener('click', () => {
+    if (rec.previewUrl) URL.revokeObjectURL(rec.previewUrl);
+    preview.classList.add('hidden');
+    preview.src = '';
+    rec.blob = null;
+    timerEl.textContent = '0:00';
+    timerEl.style.color = '';
+    hintEl.textContent = '点击下方按钮开始录音，5 分钟到会自动停止';
+    show(startBtn);
+    setTag('tag-none', '未打卡');
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    if (!rec.blob) return;
+    saveBtn.disabled = true;
+    try {
+      const res = await fetch('/api/audio?lang=' + lang + '&duration=' + rec.duration, {
+        method: 'POST',
+        headers: { 'Content-Type': rec.blob.type || 'audio/webm' },
+        body: rec.blob,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '保存失败');
+      toast('保存成功 🎉');
+      timerEl.style.color = '';
+      preview.classList.add('hidden');
+      show(startBtn);
+      await refreshStatus();
+    } catch (e) {
+      toast(e.message || '保存失败，请重试');
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+
+  card.querySelector('h2').addEventListener('click', () => { /* noop */ });
+}
+
+makeRecorder('cn');
+makeRecorder('en');
+
+// ---------- 日历 ----------
+async function loadCalendar() {
+  const { days } = await api('/api/month');
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  const first = new Date(year, month, 1);
+  const startDow = first.getDay(); // 0=周日
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const byDate = {};
+  days.forEach(d => byDate[d.date] = d);
+  const dows = ['日', '一', '二', '三', '四', '五', '六'];
+  let html = '<div class="calendar">';
+  dows.forEach(d => html += `<div class="dow">${d}</div>`);
+  for (let i = 0; i < startDow; i++) html += '<div></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const rec = byDate[date];
+    const isToday = date === todayCN();
+    let cls = 'day';
+    let mini = '';
+    if (rec) {
+      if (rec.done) { cls += ' full'; mini = '✓'; }
+      else if (rec.cn || rec.en) { cls += ' half'; mini = '半'; }
+    }
+    if (isToday) cls += ' today';
+    html += `<div class="${cls}">${d}${mini ? `<span class="mini">${mini}</span>` : ''}</div>`;
+  }
+  html += '</div>';
+  document.getElementById('calendar').innerHTML = html;
+}
+
+// ---------- 初始化 ----------
+document.getElementById('userName').textContent = user.name;
+document.getElementById('today').textContent = todayCN().replace(/-/g, '.');
+await refreshStatus();
+await loadCalendar();
+})();
+</script>
+</body>
+</html>

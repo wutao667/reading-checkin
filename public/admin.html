@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>打卡管理后台</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="container" style="max-width:760px;">
+  <div class="topbar">
+    <h1>🛠️ 打卡管理后台</h1>
+    <div class="right"><span id="userName"></span><button class="btn-link" onclick="logout()">退出</button></div>
+  </div>
+
+  <!-- 筛选 -->
+  <div class="card">
+    <h2>🔍 筛选</h2>
+    <div class="filter-bar">
+      <select id="fUser">
+        <option value="">全部学生</option>
+      </select>
+      <input type="date" id="fFrom" class="grow">
+      <span style="color:var(--sub);">至</span>
+      <input type="date" id="fTo" class="grow">
+      <button class="btn btn-sm" id="fApply">查询</button>
+    </div>
+    <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      <button class="btn btn-sm btn-ghost" id="rangeWeek">本周</button>
+      <button class="btn btn-sm btn-ghost" id="rangeMonth">本月</button>
+      <span style="flex:1"></span>
+      <button class="btn btn-sm btn-ghost" id="resetPw">🔑 重置学生密码</button>
+    </div>
+  </div>
+
+  <!-- 统计 -->
+  <div class="stats">
+    <div class="stat"><div class="num" id="stDays">0</div><div class="lbl">打卡天数</div></div>
+    <div class="stat"><div class="num" id="stFull">0</div><div class="lbl">中英完整</div></div>
+    <div class="stat"><div class="num" id="stMin">0</div><div class="lbl">累计录音(分)</div></div>
+  </div>
+
+  <!-- 记录 -->
+  <div class="card">
+    <h2>📋 打卡记录 <span id="recCount" style="font-size:13px; color:var(--sub);"></span></h2>
+    <div style="overflow-x:auto;">
+      <table id="recTable">
+        <thead><tr><th>日期</th><th>学生</th><th>中文</th><th>英文</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="recEmpty" style="text-align:center; color:var(--sub); padding:20px 0;" class="hidden">暂无记录</div>
+    </div>
+  </div>
+</div>
+
+<!-- 底部播放器 -->
+<div class="player" id="player">
+  <div class="player-title" id="playerTitle"></div>
+  <audio id="playerAudio" controls></audio>
+</div>
+
+<script src="/app.js"></script>
+<script>
+(async () => {
+const user = await guard(true);
+document.getElementById('userName').textContent = user.name;
+
+let students = [];
+const fUser = document.getElementById('fUser');
+const fFrom = document.getElementById('fFrom');
+const fTo = document.getElementById('fTo');
+const tbody = document.querySelector('#recTable tbody');
+
+function rangeDays(n) {
+  // n 天前到今天
+  const d = new Date();
+  d.setDate(d.getDate() - (n - 1));
+  const p = x => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+async function loadStudents() {
+  const { students: list } = await api('/api/students');
+  students = list;
+  fUser.innerHTML = '<option value="">全部学生</option>' + list.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+}
+
+function playAudio(url, title) {
+  const p = document.getElementById('player');
+  const a = document.getElementById('playerAudio');
+  document.getElementById('playerTitle').textContent = title;
+  a.src = url;
+  p.style.display = 'block';
+  a.play().catch(() => {});
+}
+// 供内联 onclick 调用
+window.playAudio = playAudio;
+
+async function loadRecords() {
+  const userId = fUser.value;
+  const from = fFrom.value || '2020-01-01';
+  const to = fTo.value || '2099-12-31';
+  const q = new URLSearchParams({ from, to });
+  if (userId) q.set('userId', userId);
+  const { records } = await api('/api/records?' + q.toString());
+  const { stats } = await api('/api/stats');
+
+  // 统计（受学生筛选影响）
+  const sel = userId ? stats.filter(s => String(s.id) === userId) : stats;
+  document.getElementById('stDays').textContent = sel.reduce((a, s) => a + s.days, 0);
+  document.getElementById('stFull').textContent = sel.reduce((a, s) => a + s.full, 0);
+  document.getElementById('stMin').textContent = sel.reduce((a, s) => a + s.totalMin, 0);
+  document.getElementById('recCount').textContent = `（${records.length} 条）`;
+
+  tbody.innerHTML = '';
+  if (!records.length) {
+    document.getElementById('recEmpty').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('recEmpty').classList.add('hidden');
+
+  const nameMap = {}; students.forEach(s => nameMap[s.id] = s.name);
+  for (const r of records) {
+    const tr = document.createElement('tr');
+    const cnOk = !!r.cn_duration;
+    const enOk = !!r.en_duration;
+    const status = cnOk && enOk
+      ? '<span class="badge ok">✅ 完整</span>'
+      : cnOk || enOk
+        ? '<span class="badge" style="background:#fff3d9;color:#c98a12;">⚠️ 只打了一半</span>'
+        : '<span class="badge no">未打卡</span>';
+    const cnCell = cnOk ? `${fmtDur(r.cn_duration)}<br><small style="color:var(--sub)">${fmtTime(r.cn_uploaded_at)}</small>` : '<span class="badge no">—</span>';
+    const enCell = enOk ? `${fmtDur(r.en_duration)}<br><small style="color:var(--sub)">${fmtTime(r.en_uploaded_at)}</small>` : '<span class="badge no">—</span>';
+    const ops = [];
+    if (cnOk) ops.push(`<button class="btn btn-sm btn-ghost" onclick="playAudio('/api/audio/${r.user_id}/${r.date}/cn','${r.name} ${r.date} 中文 ${fmtDur(r.cn_duration)}')">▶ 中文</button>`);
+    if (enOk) ops.push(`<button class="btn btn-sm btn-ghost" onclick="playAudio('/api/audio/${r.user_id}/${r.date}/en','${r.name} ${r.date} 英文 ${fmtDur(r.en_duration)}')">▶ 英文</button>`);
+    tr.innerHTML = `<td>${r.date}</td><td>${nameMap[r.user_id] || r.name}</td><td>${cnCell}</td><td>${enCell}</td><td>${status}</td><td>${ops.join(' ') || '—'}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function loadAll() {
+  fFrom.value = rangeDays(7);
+  fTo.value = todayCN();
+  await loadStudents();
+  await loadRecords();
+}
+
+document.getElementById('fApply').addEventListener('click', loadRecords);
+document.getElementById('rangeWeek').addEventListener('click', () => { fFrom.value = rangeDays(7); fTo.value = todayCN(); loadRecords(); });
+document.getElementById('rangeMonth').addEventListener('click', () => { fFrom.value = thisMonthCN() + '-01'; fTo.value = todayCN(); loadRecords(); });
+
+document.getElementById('resetPw').addEventListener('click', async () => {
+  const opts = {};
+  students.forEach(s => opts[s.id] = s.name);
+  const uid = prompt('选择学生重置密码：\n' + students.map((s, i) => `${i + 1}. ${s.name} (${s.username})`).join('\n') + '\n\n输入序号或用户名：');
+  if (!uid) return;
+  let target = students.find(s => s.username === uid.trim()) || students[parseInt(uid, 10) - 1];
+  if (!target) { toast('没找到该学生'); return; }
+  const np = prompt(`为「${target.name}」设置新密码（至少 6 位）：`);
+  if (!np || np.length < 6) { toast('密码至少 6 位'); return; }
+  try {
+    await api('/api/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: target.id, newPassword: np }),
+    });
+    toast(`✅ ${target.name} 的密码已重置`);
+  } catch (e) { toast(e.message); }
+});
+
+await loadAll();
+})();
+</script>
+</body>
+</html>

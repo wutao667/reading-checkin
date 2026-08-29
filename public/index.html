@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>吴家阅读打卡</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="container">
+  <div class="login-logo">
+    <div class="big">📚</div>
+    <h1>吴家阅读打卡</h1>
+    <p>每天中文 5 分钟 + 英文 5 分钟</p>
+  </div>
+
+  <div class="card" id="studentCard">
+    <div style="text-align:center; color:var(--sub); font-size:14px;">点你的头像，直接开始 🎙️</div>
+    <div class="student-grid">
+      <button class="student-btn" data-u="wuyou">
+        <span class="avatar">🐾</span>无花果<small>吴悠 · 四年级</small>
+      </button>
+      <button class="student-btn" data-u="wushuang">
+        <span class="avatar">🍐</span>妹妹<small>吴双 · 二年级</small>
+      </button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="loginCard">
+    <h2 style="justify-content:center;" id="loginTitle">家长后台登录 🔐</h2>
+    <form class="login-form" id="loginForm">
+      <input class="input" id="username" placeholder="用户名" autocomplete="username" readonly>
+      <input class="input" id="password" type="password" placeholder="密码" autocomplete="current-password">
+      <button class="btn btn-orange btn-block" type="submit">进入后台</button>
+      <button class="btn btn-ghost btn-block" type="button" id="backBtn">← 返回</button>
+    </form>
+  </div>
+
+  <div class="owner-link">
+    <button id="ownerBtn">我是家长 👨‍👩‍👧‍👦 登录后台</button>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+<script>
+const studentCard = document.getElementById('studentCard');
+const loginCard = document.getElementById('loginCard');
+const loginTitle = document.getElementById('loginTitle');
+const username = document.getElementById('username');
+const password = document.getElementById('password');
+const form = document.getElementById('loginForm');
+
+// 学生：点击头像直接进入（免密）
+document.querySelectorAll('.student-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const data = await api('/api/student-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: btn.dataset.u }),
+      });
+      location.href = data.redirect || '/checkin';
+    } catch (e) {
+      toast(e.message);
+      btn.disabled = false;
+    }
+  });
+});
+
+// 家长：密码登录后台
+document.getElementById('ownerBtn').addEventListener('click', () => {
+  username.value = 'admin';
+  loginTitle.textContent = '家长后台登录 🔐';
+  username.readOnly = true;
+  studentCard.classList.add('hidden');
+  loginCard.classList.remove('hidden');
+  password.focus();
+});
+
+document.getElementById('backBtn').addEventListener('click', () => {
+  loginCard.classList.add('hidden');
+  studentCard.classList.remove('hidden');
+  password.value = '';
+});
+
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = form.querySelector('button[type=submit]');
+  btn.disabled = true;
+  try {
+    const data = await api('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: username.value.trim(), password: password.value }),
+    });
+    location.href = data.redirect || '/admin';
+  } catch (err) {
+    toast(err.message);
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
