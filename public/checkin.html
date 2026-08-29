@@ -28,6 +28,7 @@
       <div class="rec-hint" id="hint-cn">点击下方按钮开始录音，5 分钟到会自动停止</div>
       <div class="rec-actions">
         <button class="btn btn-orange" id="start-cn">🎙️ 开始录音</button>
+        <button class="btn btn-orange hidden" id="pause-cn">⏸️ 暂停</button>
         <button class="btn btn-red hidden" id="stop-cn">⏹️ 停止</button>
         <button class="btn btn-green hidden" id="save-cn">✅ 保存</button>
         <button class="btn btn-ghost hidden" id="again-cn">🔄 重录</button>
@@ -45,6 +46,7 @@
       <div class="rec-hint" id="hint-en">点击下方按钮开始录音，5 分钟到会自动停止</div>
       <div class="rec-actions">
         <button class="btn btn-orange" id="start-en">🎙️ Start</button>
+        <button class="btn btn-orange hidden" id="pause-en">⏸️ Pause</button>
         <button class="btn btn-red hidden" id="stop-en">⏹️ Stop</button>
         <button class="btn btn-green hidden" id="save-en">✅ Save</button>
         <button class="btn btn-ghost hidden" id="again-en">🔄 Redo</button>
@@ -103,6 +105,7 @@ function makeRecorder(lang) {
   const timerEl = document.getElementById(`timer-${lang}`);
   const hintEl = document.getElementById(`hint-${lang}`);
   const startBtn = document.getElementById(`start-${lang}`);
+  const pauseBtn = document.getElementById(`pause-${lang}`);
   const stopBtn = document.getElementById(`stop-${lang}`);
   const saveBtn = document.getElementById(`save-${lang}`);
   const againBtn = document.getElementById(`again-${lang}`);
@@ -112,7 +115,7 @@ function makeRecorder(lang) {
 
   const rec = {
     lang, stream: null, recorder: null, chunks: [], timerInt: null, autoStop: null,
-    startTs: 0, blob: null, duration: 0, previewUrl: null,
+    accMs: 0, sessionStart: 0, blob: null, duration: 0, previewUrl: null,
   };
   state[lang] = rec;
 
@@ -121,16 +124,36 @@ function makeRecorder(lang) {
     tag.textContent = text;
   }
   function show(...btns) {
-    [startBtn, stopBtn, saveBtn, againBtn].forEach(b => b.classList.add('hidden'));
+    [startBtn, pauseBtn, stopBtn, saveBtn, againBtn].forEach(b => b.classList.add('hidden'));
     btns.forEach(b => b.classList.remove('hidden'));
   }
   function fmt(ms) {
     const s = Math.floor(ms / 1000);
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   }
+  function elapsedMs() {
+    const activeMs = rec.recorder && rec.recorder.state === 'recording'
+      ? Date.now() - rec.sessionStart
+      : 0;
+    return Math.min(rec.accMs + activeMs, MAX_SEC * 1000);
+  }
   function renderTimer() {
-    const elapsed = Date.now() - rec.startTs;
-    timerEl.textContent = fmt(Math.min(elapsed, MAX_SEC * 1000));
+    timerEl.textContent = fmt(elapsedMs());
+  }
+  function scheduleAutoStop() {
+    clearTimeout(rec.autoStop);
+    const remaining = Math.max(0, MAX_SEC * 1000 - rec.accMs);
+    rec.autoStop = setTimeout(stopRecording, remaining);
+  }
+  function stopRecording() {
+    clearTimeout(rec.autoStop);
+    clearInterval(rec.timerInt);
+    if (!rec.recorder || rec.recorder.state === 'inactive') return;
+    if (rec.recorder.state === 'recording') {
+      rec.accMs = elapsedMs();
+      rec.sessionStart = 0;
+    }
+    rec.recorder.stop();
   }
   function stopTracks() {
     if (rec.stream) rec.stream.getTracks().forEach(t => t.stop());
@@ -152,9 +175,10 @@ function makeRecorder(lang) {
     rec.recorder.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
     rec.recorder.onstop = () => {
       clearInterval(rec.timerInt);
+      clearTimeout(rec.autoStop);
       stopTracks();
       rec.blob = new Blob(rec.chunks, { type: rec.recorder.mimeType });
-      rec.duration = Math.round((Date.now() - rec.startTs) / 1000);
+      rec.duration = Math.round(rec.accMs / 1000);
       rec.previewUrl = URL.createObjectURL(rec.blob);
       preview.src = rec.previewUrl;
       preview.classList.remove('hidden');
@@ -163,20 +187,42 @@ function makeRecorder(lang) {
       show(saveBtn, againBtn);
       setTag('tag-part', '已录音');
     };
-    rec.startTs = Date.now();
+    rec.accMs = 0;
+    rec.sessionStart = Date.now();
     rec.recorder.start();
     rec.timerInt = setInterval(renderTimer, 250);
-    rec.autoStop = setTimeout(() => { if (rec.recorder && rec.recorder.state === 'recording') rec.recorder.stop(); }, MAX_SEC * 1000);
-    show(stopBtn);
+    scheduleAutoStop();
+    pauseBtn.textContent = lang === 'cn' ? '⏸️ 暂停' : '⏸️ Pause';
+    show(pauseBtn, stopBtn);
     setTag('tag-rec', '录音中…');
     hintEl.textContent = `录音进行中，5:00 自动停止 · 请大声朗读 🗣️`;
     timerEl.style.color = 'var(--red)';
   });
 
-  stopBtn.addEventListener('click', () => {
-    clearTimeout(rec.autoStop);
-    if (rec.recorder && rec.recorder.state !== 'inactive') rec.recorder.stop();
+  pauseBtn.addEventListener('click', () => {
+    if (!rec.recorder) return;
+    if (rec.recorder.state === 'recording') {
+      rec.accMs = elapsedMs();
+      rec.sessionStart = 0;
+      rec.recorder.pause();
+      clearInterval(rec.timerInt);
+      clearTimeout(rec.autoStop);
+      renderTimer();
+      pauseBtn.textContent = lang === 'cn' ? '▶️ 继续' : '▶️ Resume';
+      hintEl.textContent = '⏸️ 已暂停，点继续接着读';
+      setTag('tag-part', '已暂停');
+    } else if (rec.recorder.state === 'paused') {
+      rec.sessionStart = Date.now();
+      rec.recorder.resume();
+      rec.timerInt = setInterval(renderTimer, 250);
+      scheduleAutoStop();
+      pauseBtn.textContent = lang === 'cn' ? '⏸️ 暂停' : '⏸️ Pause';
+      hintEl.textContent = '录音进行中，5:00 自动停止 · 请大声朗读 🗣️';
+      setTag('tag-rec', '录音中…');
+    }
   });
+
+  stopBtn.addEventListener('click', stopRecording);
 
   againBtn.addEventListener('click', () => {
     if (rec.previewUrl) URL.revokeObjectURL(rec.previewUrl);
