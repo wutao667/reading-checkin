@@ -286,8 +286,10 @@ async function loadCalendar() {
     let cls = 'day';
     let mini = '';
     if (rec) {
-      if (rec.done) { cls += ' full'; mini = '✓'; }
-      else if (rec.cn || rec.en) { cls += ' half'; mini = '半'; }
+      const flowers = (rec.cn ? 1 : 0) + (rec.en ? 1 : 0);
+      if (flowers === 2) cls += ' full';
+      else if (flowers === 1) cls += ' half';
+      mini = '🌸'.repeat(flowers);
     }
     if (isToday) cls += ' today';
     html += `<div class="${cls}">${d}${mini ? `<span class="mini">${mini}</span>` : ''}</div>`;
