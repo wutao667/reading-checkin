@@ -29,7 +29,6 @@
       <button class="btn btn-sm btn-ghost" id="rangeWeek">本周</button>
       <button class="btn btn-sm btn-ghost" id="rangeMonth">本月</button>
       <span style="flex:1"></span>
-      <button class="btn btn-sm btn-ghost" id="resetPw">🔑 重置学生密码</button>
     </div>
   </div>
 
@@ -149,25 +148,6 @@ async function loadAll() {
 document.getElementById('fApply').addEventListener('click', loadRecords);
 document.getElementById('rangeWeek').addEventListener('click', () => { fFrom.value = rangeDays(7); fTo.value = todayCN(); loadRecords(); });
 document.getElementById('rangeMonth').addEventListener('click', () => { fFrom.value = thisMonthCN() + '-01'; fTo.value = todayCN(); loadRecords(); });
-
-document.getElementById('resetPw').addEventListener('click', async () => {
-  const opts = {};
-  students.forEach(s => opts[s.id] = s.name);
-  const uid = prompt('选择学生重置密码：\n' + students.map((s, i) => `${i + 1}. ${s.name} (${s.username})`).join('\n') + '\n\n输入序号或用户名：');
-  if (!uid) return;
-  let target = students.find(s => s.username === uid.trim()) || students[parseInt(uid, 10) - 1];
-  if (!target) { toast('没找到该学生'); return; }
-  const np = prompt(`为「${target.name}」设置新密码（至少 6 位）：`);
-  if (!np || np.length < 6) { toast('密码至少 6 位'); return; }
-  try {
-    await api('/api/password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: target.id, newPassword: np }),
-    });
-    toast(`✅ ${target.name} 的密码已重置`);
-  } catch (e) { toast(e.message); }
-});
 
 await loadAll();
 })();
