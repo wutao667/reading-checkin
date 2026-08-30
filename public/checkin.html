@@ -86,7 +86,22 @@ function syncCardState(lang, st) {
   if (st.saved) {
     tag.textContent = '已打卡';
     tag.className = 'status-tag tag-done';
-    savedInfo.textContent = `已保存 · 时长 ${fmtDur(st.duration)} · ${fmtTime(st.uploadedAt)}（可直接重录覆盖）`;
+    savedInfo.textContent = `已保存 · 时长 ${fmtDur(st.duration)} · ${fmtTime(st.uploadedAt)}（可直接重录覆盖） `;
+    const listenBtn = document.createElement('button');
+    listenBtn.type = 'button';
+    listenBtn.className = 'btn btn-ghost';
+    listenBtn.textContent = '🎧 回听';
+    listenBtn.addEventListener('click', async () => {
+      const preview = document.getElementById(`preview-${lang}`);
+      preview.src = st.url;
+      preview.classList.remove('hidden');
+      try {
+        await preview.play();
+      } catch (e) {
+        toast('无法播放录音，请稍后重试');
+      }
+    });
+    savedInfo.appendChild(listenBtn);
     savedInfo.classList.remove('hidden');
   } else {
     tag.textContent = '未打卡';
@@ -286,7 +301,9 @@ async function loadCalendar() {
     let cls = 'day';
     let mini = '';
     if (rec) {
-      const flowers = (rec.cn ? 1 : 0) + (rec.en ? 1 : 0);
+      const cnDone = rec.cn && (rec.cnDuration || 0) >= 180;
+      const enDone = rec.en && (rec.enDuration || 0) >= 180;
+      const flowers = (cnDone ? 1 : 0) + (enDone ? 1 : 0);
       if (flowers === 2) cls += ' full';
       else if (flowers === 1) cls += ' half';
       mini = '🌸'.repeat(flowers);
