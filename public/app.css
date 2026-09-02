@@ -66,7 +66,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .input:focus { border-color: var(--orange); }
 
 /* 学生大按钮 */
-.student-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+.student-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
 .student-btn {
   background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 22px 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;
@@ -136,8 +136,8 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .home-calendar { margin-top: 12px; }
 .home-calendar .day { justify-content: flex-start; padding: 4px 2px 3px; gap: 1px; }
 .home-calendar .day-number { font-size: 11px; line-height: 1.2; }
-.day-icons { display: grid; grid-template-columns: repeat(2, 1fr); width: 100%; margin-top: auto; }
-.day-icons i { font-style: normal; font-size: 13px; line-height: 1.25; text-align: center; }
+.day-icons { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; margin-top: auto; }
+.day-icons i { font-style: normal; font-size: 11px; line-height: 1.25; text-align: center; }
 .day-icons i.unchecked { filter: grayscale(1); opacity: .16; }
 .calendar-message { padding: 24px 0 12px; text-align: center; color: var(--sub); font-size: 13px; }
 
