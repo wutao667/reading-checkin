@@ -74,7 +74,7 @@ checkins: id, user_id, date(YYYY-MM-DD), cn_path, cn_duration, cn_uploaded_at,
 - 数据库文件缺失时自动建表 + 播种初始账号（wuyou / wushuang / admin）。
 
 ### 3. 会话与认证
-- 登录成功发 `sid` HttpOnly cookie，token 存在**进程内存 Map**（重启即失效，学生重新点头像即可）。
+- 登录成功发 `sid` HttpOnly cookie；会话持久化到 SQLite 并同步保留在进程内存 Map，服务重启后自动恢复；学生端遇到未登录 401 时会自动重新登录并重试一次。
 - **多 cookie 兼容**（2026-08-29 修复）：`currentUser()` 遍历请求中所有 `sid` cookie 找第一个有效会话；登录/退出时同时清理旧路径（`/api`、`/checkin`）残留 cookie。修复前只读第一个 sid，旧 cookie 残留会导致「点妹妹回主页」。
 - 学生免密登录走 `/api/student-login`（只接受 role=student）；家长走 `/api/login`（校验密码）。
 - ⚠️ 免密是家庭内网场景的取舍：任何知道网址的人都能以学生身份打卡（只能看到该学生自己的记录），若对外公开需加防护。

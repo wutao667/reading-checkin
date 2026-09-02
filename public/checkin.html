@@ -290,11 +290,20 @@ function makeRecorder(lang) {
     if (!rec.blob) return;
     saveBtn.disabled = true;
     try {
-      const res = await fetch('/api/audio?lang=' + lang + '&duration=' + rec.duration + '&date=' + encodeURIComponent(currentDate), {
+      const upload = () => fetch('/api/audio?lang=' + lang + '&duration=' + rec.duration + '&date=' + encodeURIComponent(currentDate), {
         method: 'POST',
         headers: { 'Content-Type': rec.blob.type || 'audio/webm' },
         body: rec.blob,
       });
+      let res = await upload();
+      if (res.status === 401 && window.__checkinUser?.role === 'student') {
+        await api('/api/student-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: window.__checkinUser.username }),
+        });
+        res = await upload();
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '保存失败');
       toast('保存成功 🎉');

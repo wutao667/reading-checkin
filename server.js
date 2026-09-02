@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS checkins (
   updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
   UNIQUE(user_id, date)
 );
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  expires INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_checkins_user_date ON checkins(user_id, date);
 `);
 
@@ -166,12 +172,29 @@ function sessionTokens(req) {
 }
 
 const sessions = new Map(); // token -> {userId, role, expires}
+{
+  const now = Date.now();
+  const rows = db.prepare('SELECT token, user_id, role, expires FROM sessions').all();
+  const deleteSession = db.prepare('DELETE FROM sessions WHERE token = ?');
+  for (const row of rows) {
+    if (row.expires > now) {
+      sessions.set(row.token, { userId: row.user_id, role: row.role, expires: row.expires });
+    } else {
+      deleteSession.run(row.token);
+    }
+  }
+  console.log(`[session] 已恢复 ${sessions.size} 个会话`);
+}
 
 function currentUser(req) {
   for (const token of sessionTokens(req)) {
     const s = sessions.get(token);
     if (!s) continue;
-    if (s.expires < Date.now()) { sessions.delete(token); continue; }
+    if (s.expires <= Date.now()) {
+      sessions.delete(token);
+      db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+      continue;
+    }
     const u = db.prepare('SELECT id, username, name, role FROM users WHERE id = ?').get(s.userId);
     if (u) return u;
   }
@@ -281,7 +304,9 @@ const server = http.createServer(async (req, res) => {
           return json(res, 401, { error: '用户名或密码错误' });
         }
         const token = crypto.randomBytes(24).toString('hex');
-        sessions.set(token, { userId: u.id, role: u.role, expires: Date.now() + SESSION_TTL });
+        const expires = Date.now() + SESSION_TTL;
+        sessions.set(token, { userId: u.id, role: u.role, expires });
+        db.prepare('INSERT OR REPLACE INTO sessions (token, user_id, role, expires) VALUES (?, ?, ?, ?)').run(token, u.id, u.role, expires);
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Set-Cookie': sessionCookies(token),
@@ -296,7 +321,9 @@ const server = http.createServer(async (req, res) => {
         const u = db.prepare("SELECT * FROM users WHERE username = ? AND role = 'student'").get(body.username);
         if (!u) return json(res, 404, { error: '学生不存在' });
         const token = crypto.randomBytes(24).toString('hex');
-        sessions.set(token, { userId: u.id, role: u.role, expires: Date.now() + SESSION_TTL });
+        const expires = Date.now() + SESSION_TTL;
+        sessions.set(token, { userId: u.id, role: u.role, expires });
+        db.prepare('INSERT OR REPLACE INTO sessions (token, user_id, role, expires) VALUES (?, ?, ?, ?)').run(token, u.id, u.role, expires);
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
           'Set-Cookie': sessionCookies(token),
@@ -306,7 +333,10 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (p === '/api/logout' && req.method === 'POST') {
-        sessionTokens(req).forEach(token => sessions.delete(token));
+        sessionTokens(req).forEach(token => {
+          sessions.delete(token);
+          db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+        });
         const body = JSON.stringify({ ok: true });
         res.writeHead(200, {
           'Content-Type': 'application/json; charset=utf-8',
