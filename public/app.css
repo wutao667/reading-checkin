@@ -115,6 +115,20 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .calendar .day.half { background: #ffe9c4; color: #b97d13; }
 .calendar .day.today { outline: 2.5px solid var(--orange); }
 .calendar .day .mini { font-size: 9px; font-weight: 400; }
+.calendar-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.calendar-heading h2 { margin-bottom: 0; }
+.calendar-nav { display: flex; align-items: center; gap: 7px; color: var(--sub); font-size: 13px; white-space: nowrap; }
+.calendar-nav button {
+  width: 28px; height: 28px; border-radius: 8px; background: #f0ece3; color: var(--ink);
+  font-size: 20px; line-height: 1;
+}
+.home-calendar { margin-top: 12px; }
+.home-calendar .day { justify-content: flex-start; padding: 4px 2px 3px; gap: 1px; }
+.home-calendar .day-number { font-size: 11px; line-height: 1.2; }
+.day-icons { display: grid; grid-template-columns: repeat(2, 1fr); width: 100%; margin-top: auto; }
+.day-icons i { font-style: normal; font-size: 13px; line-height: 1.25; text-align: center; }
+.day-icons i.unchecked { filter: grayscale(1); opacity: .16; }
+.calendar-message { padding: 24px 0 12px; text-align: center; color: var(--sub); font-size: 13px; }
 
 /* 表格 */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }

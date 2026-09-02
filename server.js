@@ -318,6 +318,23 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { user: u });
       }
 
+      // 首页公开打卡日历（家庭内部使用，仅返回是否打卡）
+      if (p === '/api/calendar' && req.method === 'GET') {
+        const requestedMonth = url.searchParams.get('month');
+        const month = /^\d{4}-\d{2}$/.test(requestedMonth || '') ? requestedMonth : monthStr();
+        const students = db.prepare("SELECT id, username, name FROM users WHERE role = 'student' ORDER BY id").all();
+        const rows = db.prepare("SELECT date, user_id, cn_path, en_path FROM checkins WHERE date LIKE ?").all(month + '%');
+        const days = {};
+        rows.forEach(row => {
+          if (!days[row.date]) {
+            days[row.date] = {};
+            students.forEach(student => { days[row.date][student.id] = false; });
+          }
+          days[row.date][row.user_id] = !!(row.cn_path || row.en_path);
+        });
+        return json(res, 200, { month, students, days });
+      }
+
       // 修改密码（本人或管理员代改）
       if (p === '/api/password' && req.method === 'POST') {
         const u = needLogin(req, res);

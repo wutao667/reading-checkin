@@ -36,6 +36,18 @@
     </form>
   </div>
 
+  <div class="card home-calendar-card">
+    <div class="calendar-heading">
+      <h2>📅 近期打卡</h2>
+      <div class="calendar-nav">
+        <button type="button" id="calendarPrev" aria-label="上月">‹</button>
+        <span id="calendarMonth"></span>
+        <button type="button" id="calendarNext" aria-label="下月">›</button>
+      </div>
+    </div>
+    <div id="homeCalendar" aria-live="polite"></div>
+  </div>
+
   <div class="owner-link">
     <button id="ownerBtn">我是家长 👨‍👩‍👧‍👦 登录后台</button>
   </div>
@@ -49,6 +61,59 @@ const loginTitle = document.getElementById('loginTitle');
 const username = document.getElementById('username');
 const password = document.getElementById('password');
 const form = document.getElementById('loginForm');
+const iconByUsername = { wuyou: '🐾', wushuang: '🍐' };
+let calendarMonth = thisMonthCN();
+
+function shiftMonth(month, offset) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const date = new Date(year, monthNumber - 1 + offset, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function loadHomeCalendar() {
+  const calendar = document.getElementById('homeCalendar');
+  calendar.innerHTML = '<div class="calendar-message">加载中…</div>';
+  try {
+    const data = await fetch(`/api/calendar?month=${encodeURIComponent(calendarMonth)}`, { cache: 'no-store' }).then(async res => {
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || '日历加载失败');
+      return body;
+    });
+    calendarMonth = data.month;
+    const [year, monthNumber] = calendarMonth.split('-').map(Number);
+    document.getElementById('calendarMonth').textContent = `${year}年${monthNumber}月`;
+    const firstDay = new Date(year, monthNumber - 1, 1);
+    const leadingBlanks = (firstDay.getDay() + 6) % 7;
+    const daysInMonth = new Date(year, monthNumber, 0).getDate();
+    let html = '<div class="calendar home-calendar">';
+    ['一', '二', '三', '四', '五', '六', '日'].forEach(day => { html += `<div class="dow">${day}</div>`; });
+    for (let i = 0; i < leadingBlanks; i++) html += '<div></div>';
+    for (let day = 1; day <= daysInMonth; day++) {
+      const date = `${calendarMonth}-${String(day).padStart(2, '0')}`;
+      const status = data.days[date] || {};
+      const icons = data.students.map(student => {
+        const icon = iconByUsername[student.username] || '●';
+        const active = status[student.id] === true;
+        return `<i class="${active ? 'checked' : 'unchecked'}" title="${student.name}${active ? '已打卡' : '未打卡'}">${icon}</i>`;
+      }).join('');
+      html += `<div class="day${date === todayCN() ? ' today' : ''}"><span class="day-number">${day}</span><span class="day-icons">${icons}</span></div>`;
+    }
+    calendar.innerHTML = html + '</div>';
+  } catch (error) {
+    document.getElementById('calendarMonth').textContent = calendarMonth;
+    calendar.innerHTML = `<div class="calendar-message">${error.message}</div>`;
+  }
+}
+
+document.getElementById('calendarPrev').addEventListener('click', () => {
+  calendarMonth = shiftMonth(calendarMonth, -1);
+  loadHomeCalendar();
+});
+document.getElementById('calendarNext').addEventListener('click', () => {
+  calendarMonth = shiftMonth(calendarMonth, 1);
+  loadHomeCalendar();
+});
+loadHomeCalendar();
 
 // 学生：点击头像直接进入（免密）
 document.querySelectorAll('.student-btn').forEach(btn => {
