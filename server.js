@@ -60,6 +60,16 @@ function todayStr() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+function yesterdayStr() {
+  const d = new Date(Date.now() - 86400000);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function isValidCheckinDate(date) {
+  return date === todayStr() || date === yesterdayStr();
+}
+
 function monthStr() {
   return todayStr().slice(0, 7);
 }
@@ -370,7 +380,9 @@ const server = http.createServer(async (req, res) => {
         if (!u) return;
         const uid = url.searchParams.get('userId') || u.id;
         if (u.role !== 'admin' && uid != u.id) return json(res, 403, { error: '没有权限' });
-        const date = todayStr();
+        const date = url.searchParams.get('date') || todayStr();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json(res, 400, { error: '日期格式错误' });
+        if (!isValidCheckinDate(date)) return json(res, 400, { error: '只能补昨天的打卡' });
         const r = db.prepare('SELECT cn_path, cn_duration, cn_uploaded_at, en_path, en_duration, en_uploaded_at FROM checkins WHERE user_id = ? AND date = ?').get(uid, date);
         const mk = (path_, dur, at) => path_ ? { saved: true, duration: dur, uploadedAt: at, url: `/api/audio/${uid}/${date}/cn` } : { saved: false };
         return json(res, 200, { date, cn: r && r.cn_path ? mk(r.cn_path, r.cn_duration, r.cn_uploaded_at) : { saved: false }, en: r && r.en_path ? { ...mk(r.en_path, r.en_duration, r.en_uploaded_at), url: `/api/audio/${uid}/${date}/en` } : { saved: false } });
@@ -400,11 +412,13 @@ const server = http.createServer(async (req, res) => {
         if (!u) return;
         const lang = url.searchParams.get('lang');
         if (lang !== 'cn' && lang !== 'en') return json(res, 400, { error: 'lang 参数必须是 cn 或 en' });
+        const date = url.searchParams.get('date') || todayStr();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json(res, 400, { error: '日期格式错误' });
+        if (!isValidCheckinDate(date)) return json(res, 400, { error: '只能补昨天的打卡' });
         const dur = parseFloat(url.searchParams.get('duration') || '0');
         const buf = await readBody(req, MAX_AUDIO_BYTES).catch(() => null);
         if (!buf || buf.length === 0) return json(res, 400, { error: '音频为空' });
 
-        const date = todayStr();
         const ext = extFromMime(req.headers['content-type']);
         const dir = path.join(UPLOADS, String(u.id), date);
         fs.mkdirSync(dir, { recursive: true });

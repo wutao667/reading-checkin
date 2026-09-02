@@ -12,11 +12,15 @@
     <h1>📚 阅读打卡</h1>
     <div class="right"><span id="userName"></span><button class="btn-link" onclick="logout()">退出</button></div>
   </div>
-  <p style="color:var(--sub); font-size:14px; margin-bottom:14px;">今天 <b id="today"></b> · 每天中文 + 英文各 5 分钟 🎙️</p>
+  <p style="color:var(--sub); font-size:14px; margin-bottom:8px;"><span id="dateLabel">今天</span> <b id="today"></b> · 每天中文 + 英文各 5 分钟 🎙️</p>
+  <div class="date-bar" id="dateBar">
+    <span id="dateBarText"></span>
+    <button class="hidden" type="button" id="backToday">返回今天</button>
+  </div>
 
   <!-- 今日状态 -->
   <div class="card">
-    <h2>🗓️ 今日打卡</h2>
+    <h2 id="statusTitle">🗓️ 今日打卡</h2>
     <div id="todayStatus" style="font-size:14px; color:var(--sub);">加载中…</div>
   </div>
 
@@ -58,7 +62,14 @@
 
   <!-- 本月日历 -->
   <div class="card">
-    <h2>📅 本月打卡</h2>
+    <div class="calendar-heading">
+      <h2>📅 打卡日历</h2>
+      <div class="calendar-nav">
+        <button type="button" id="calendarPrev" aria-label="上月">‹</button>
+        <span id="calendarMonth"></span>
+        <button type="button" id="calendarNext" aria-label="下月">›</button>
+      </div>
+    </div>
     <div id="calendar"></div>
   </div>
 </div>
@@ -69,9 +80,33 @@
 const MAX_SEC = 300; // 5 分钟
 const user = await guard(false);
 if (!user) return;
+let currentDate = todayCN();
+let calendarMonth = thisMonthCN();
+
+function yesterdayCN() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function updateDateHeader() {
+  const isToday = currentDate === todayCN();
+  document.getElementById('dateLabel').textContent = isToday ? '今天' : '昨天';
+  document.getElementById('today').textContent = currentDate.replace(/-/g, '.');
+  document.getElementById('statusTitle').textContent = isToday ? '🗓️ 今日打卡' : '🗓️ 昨日补打卡';
+  document.getElementById('dateBarText').textContent = isToday
+    ? `今天 · ${currentDate}`
+    : `🔄 补打卡 ${currentDate}（昨天）`;
+  document.getElementById('dateBar').classList.toggle('makeup', !isToday);
+  document.getElementById('backToday').classList.toggle('hidden', isToday);
+}
 
 async function refreshStatus() {
-  const t = await api('/api/today');
+  const requestedDate = currentDate;
+  const t = await api('/api/today?date=' + encodeURIComponent(requestedDate));
+  if (requestedDate !== currentDate) return;
+  updateDateHeader();
   const parts = [];
   const cn = t.cn.saved ? `中文 ✅ ${fmtDur(t.cn.duration)}（${fmtTime(t.cn.uploadedAt)}）` : '中文 ⬜ 未打卡';
   const en = t.en.saved ? `英文 ✅ ${fmtDur(t.en.duration)}（${fmtTime(t.en.uploadedAt)}）` : '英文 ⬜ 未打卡';
@@ -255,7 +290,7 @@ function makeRecorder(lang) {
     if (!rec.blob) return;
     saveBtn.disabled = true;
     try {
-      const res = await fetch('/api/audio?lang=' + lang + '&duration=' + rec.duration, {
+      const res = await fetch('/api/audio?lang=' + lang + '&duration=' + rec.duration + '&date=' + encodeURIComponent(currentDate), {
         method: 'POST',
         headers: { 'Content-Type': rec.blob.type || 'audio/webm' },
         body: rec.blob,
@@ -281,10 +316,27 @@ makeRecorder('cn');
 makeRecorder('en');
 
 // ---------- 日历 ----------
+function shiftMonth(month, offset) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const date = new Date(year, monthNumber - 1 + offset, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function setCurrentDate(date) {
+  if (date !== todayCN() && date !== yesterdayCN()) return;
+  currentDate = date;
+  calendarMonth = date.slice(0, 7);
+  updateDateHeader();
+  await Promise.all([refreshStatus(), loadCalendar()]);
+}
+
 async function loadCalendar() {
-  const { days } = await api('/api/month');
-  const now = new Date();
-  const year = now.getFullYear(), month = now.getMonth();
+  const requestedMonth = calendarMonth;
+  const { days } = await api('/api/month?month=' + encodeURIComponent(requestedMonth));
+  if (requestedMonth !== calendarMonth) return;
+  const [year, monthNumber] = calendarMonth.split('-').map(Number);
+  const month = monthNumber - 1;
+  document.getElementById('calendarMonth').textContent = `${year}年${monthNumber}月`;
   const first = new Date(year, month, 1);
   const startDow = first.getDay(); // 0=周日
   const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -298,6 +350,7 @@ async function loadCalendar() {
     const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const rec = byDate[date];
     const isToday = date === todayCN();
+    const canSelect = isToday || date === yesterdayCN();
     let cls = 'day';
     let mini = '';
     if (rec) {
@@ -309,15 +362,40 @@ async function loadCalendar() {
       mini = '🌸'.repeat(flowers);
     }
     if (isToday) cls += ' today';
-    html += `<div class="${cls}">${d}${mini ? `<span class="mini">${mini}</span>` : ''}</div>`;
+    if (canSelect) cls += ' selectable';
+    if (date === currentDate) cls += ' selected';
+    const attrs = canSelect
+      ? ` role="button" tabindex="0" data-date="${date}" title="${isToday ? '切换到今天打卡' : '补昨天的打卡'}"`
+      : ' title="只能补昨天的打卡"';
+    html += `<div class="${cls}"${attrs}>${d}${mini ? `<span class="mini">${mini}</span>` : ''}</div>`;
   }
   html += '</div>';
-  document.getElementById('calendar').innerHTML = html;
+  const calendar = document.getElementById('calendar');
+  calendar.innerHTML = html;
+  calendar.querySelectorAll('[data-date]').forEach(day => {
+    const select = () => setCurrentDate(day.dataset.date);
+    day.addEventListener('click', select);
+    day.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        select();
+      }
+    });
+  });
 }
 
 // ---------- 初始化 ----------
 document.getElementById('userName').textContent = user.name;
-document.getElementById('today').textContent = todayCN().replace(/-/g, '.');
+document.getElementById('backToday').addEventListener('click', () => setCurrentDate(todayCN()));
+document.getElementById('calendarPrev').addEventListener('click', () => {
+  calendarMonth = shiftMonth(calendarMonth, -1);
+  loadCalendar();
+});
+document.getElementById('calendarNext').addEventListener('click', () => {
+  calendarMonth = shiftMonth(calendarMonth, 1);
+  loadCalendar();
+});
+updateDateHeader();
 await refreshStatus();
 await loadCalendar();
 })();
