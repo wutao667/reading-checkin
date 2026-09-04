@@ -70,16 +70,17 @@ async function extractVoiceSegment(srcFile, dstWav, ffmpegPath) {
 
 // 与 server.js 的 buildSignedUrl 保持一致。
 function buildSignedUrl(appId, secretId, secretKey, timestamp, expired, options = {}) {
+  const engine = options.engine || '16k_zh';
   const params = {
     eval_mode: 3,
     expired,
     nonce: options.nonce || crypto.randomInt(1, 1000000000),
     rec_mode: 1,
     ref_text: '',
-    score_coeff: '1.0',
+    score_coeff: engine === '16k_zh' ? '2.5' : '1.0',
     secretid: secretId,
     sentence_info_enabled: 0,
-    server_engine_type: options.engine || '16k_zh',
+    server_engine_type: engine,
     text_mode: 0,
     timestamp,
     voice_format: 1,
