@@ -87,6 +87,13 @@ let currentDate = todayCN();
 let calendarMonth = thisMonthCN();
 const scorePollTokens = { cn: 0, en: 0 };
 
+function coinTypeFor(score) {
+  if (score == null) return null;
+  if (score >= 90) return 'gold';
+  if (score >= 80) return 'silver';
+  return 'bronze';
+}
+
 function renderScore(lang, response) {
   const el = document.getElementById(`score-${lang}`);
   if (!response.enabled || !response.score) { el.classList.add('hidden'); return 'none'; }
@@ -94,7 +101,10 @@ function renderScore(lang, response) {
   el.classList.remove('hidden');
   if (s.status === 'pending') { el.textContent = '🔍 评分中…'; return 'pending'; }
   if (s.status === 'done') {
-    el.textContent = `🏆 总分 ${Math.round(s.total)} · 发音 ${Math.round(s.accuracy)} · 流利度 ${Math.round(s.fluency * 100)}`;
+    const coin = coinTypeFor(s.total);
+    const coinLabels = { gold: '金', silver: '银', bronze: '铜' };
+    const coinHtml = coin ? `<span class="coin ${coin}">${coinLabels[coin]}</span>` : '';
+    el.innerHTML = `${coinHtml}总分 ${Math.round(s.total)} · 发音 ${Math.round(s.accuracy)} · 流利度 ${Math.round(s.fluency * 100)}`;
     return 'done';
   }
   el.classList.add('hidden');
@@ -411,10 +421,7 @@ async function setCurrentDate(date) {
 }
 
 function medalFor(score) {
-  if (score == null) return '';
-  if (score >= 90) return 'gold';
-  if (score >= 80) return 'silver';
-  return 'bronze';
+  return coinTypeFor(score) || '';
 }
 
 async function loadCalendar() {

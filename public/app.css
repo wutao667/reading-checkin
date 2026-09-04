@@ -92,7 +92,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .rec-actions .btn { flex: 1; min-width: 120px; }
 .rec-audio { width: 100%; margin-top: 12px; }
 .rec-saved-info { text-align: center; font-size: 13px; color: var(--sub); margin-top: 8px; }
-.score-info { text-align:center; margin-top:10px; color:#b36b00; font-size:14px; font-weight:600; }
+.score-info { display:flex; align-items:center; justify-content:center; gap:6px; text-align:center; margin-top:10px; color:#b36b00; font-size:14px; font-weight:600; }
 .score-cell { white-space:nowrap; line-height:1.7; }
 .date-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
