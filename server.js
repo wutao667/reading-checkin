@@ -150,11 +150,11 @@ function evaluateWav(wavPath, lang) {
         if (data.result) lastResult = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
         if (data.final === 1) {
           if (!lastResult) return finish(new Error('评测结束但未返回评分结果'));
-          const score = Number(lastResult.SuggestedScore);
-          const accuracy = Number(lastResult.PronAccuracy);
-          const fluency = Number(lastResult.PronFluency);
-          if (![score, accuracy, fluency].every(Number.isFinite)) return finish(new Error('评分结果字段无效'));
-          finish(null, { score, accuracy, fluency });
+          const accuracy = lastResult.PronAccuracy == null ? NaN : Number(lastResult.PronAccuracy);
+          const fluency = lastResult.PronFluency == null ? NaN : Number(lastResult.PronFluency);
+          if (![accuracy, fluency].every(Number.isFinite)) return finish(new Error('评分结果字段无效'));
+          const total = (accuracy + fluency * 100) / 2;
+          finish(null, { total, accuracy, fluency });
         }
       } catch (error) { finish(new Error(`评测响应解析失败: ${error.message}`)); }
     });
@@ -199,7 +199,7 @@ async function processScoreQueue() {
       }
       if (!isLatest()) continue;
       if (result) db.prepare("UPDATE scores SET status='done', total=?, accuracy=?, fluency=?, error=NULL, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
-        .run(result.score, result.accuracy, result.fluency, task.checkinId, task.lang);
+        .run(result.total, result.accuracy, result.fluency, task.checkinId, task.lang);
       else db.prepare("UPDATE scores SET status='failed', error=?, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
         .run(String(lastError?.message || '评分失败').slice(0, 500), task.checkinId, task.lang);
     } catch (error) {

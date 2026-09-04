@@ -122,11 +122,11 @@ function evaluateWav(wavPath, lang, config) {
         if (data.result) lastResult = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
         if (data.final === 1) {
           if (!lastResult) return finish(new Error('评测结束但未返回评分结果'));
-          const score = Number(lastResult.SuggestedScore);
-          const accuracy = Number(lastResult.PronAccuracy);
-          const fluency = Number(lastResult.PronFluency);
-          if (![score, accuracy, fluency].every(Number.isFinite)) return finish(new Error('评分结果字段无效'));
-          finish(null, { score, accuracy, fluency });
+          const accuracy = lastResult.PronAccuracy == null ? NaN : Number(lastResult.PronAccuracy);
+          const fluency = lastResult.PronFluency == null ? NaN : Number(lastResult.PronFluency);
+          if (![accuracy, fluency].every(Number.isFinite)) return finish(new Error('评分结果字段无效'));
+          const total = (accuracy + fluency * 100) / 2;
+          finish(null, { total, accuracy, fluency });
         }
       } catch (error) { finish(new Error(`评测响应解析失败: ${error.message}`)); }
     });
@@ -150,6 +150,7 @@ async function main() {
   };
   const db = new DatabaseSync(DB_PATH);
   try {
+    db.prepare("UPDATE scores SET total = (accuracy + fluency * 100) / 2 WHERE status = 'done'").run();
     const rows = db.prepare(`SELECT c.id, c.date, c.cn_path, c.en_path, u.name
       FROM checkins c LEFT JOIN users u ON u.id = c.user_id
       WHERE (c.cn_path IS NOT NULL OR c.en_path IS NOT NULL)
@@ -187,9 +188,9 @@ async function main() {
         const enough = await extractVoiceSegment(src, temp, process.env.FFMPEG_PATH.trim());
         if (!enough) throw new Error('有效语音不足');
         const result = await evaluateWav(temp, task.lang, config);
-        saveDone.run(task.checkinId, task.lang, result.score, result.accuracy, result.fluency);
+        saveDone.run(task.checkinId, task.lang, result.total, result.accuracy, result.fluency);
         succeeded++;
-        console.log(`${prefix} → 总分 ${result.score}`);
+        console.log(`${prefix} → 总分 ${result.total}`);
       } catch (error) {
         const message = String(error.message || error).slice(0, 500);
         saveFailed.run(task.checkinId, task.lang, message);
