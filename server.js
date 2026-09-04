@@ -606,6 +606,35 @@ const server = http.createServer(async (req, res) => {
         })) });
       }
 
+      // 本月累计币种（每条已完成的中/英文评分各计一枚）
+      if (p === '/api/coins' && req.method === 'GET') {
+        const u = needLogin(req, res);
+        if (!u) return;
+        const uid = url.searchParams.get('userId') || u.id;
+        if (u.role !== 'admin' && uid != u.id) return json(res, 403, { error: '没有权限' });
+        const requestedMonth = url.searchParams.get('month');
+        if (requestedMonth && !/^\d{4}-\d{2}$/.test(requestedMonth)) {
+          return json(res, 400, { error: '月份格式错误' });
+        }
+        const month = requestedMonth || monthStr();
+        const coins = db.prepare(`
+          SELECT
+            SUM(CASE WHEN sc.total >= 90 THEN 1 ELSE 0 END) AS gold,
+            SUM(CASE WHEN sc.total >= 80 AND sc.total < 90 THEN 1 ELSE 0 END) AS silver,
+            SUM(CASE WHEN sc.total < 80 THEN 1 ELSE 0 END) AS bronze
+          FROM checkins c
+          JOIN scores sc ON sc.checkin_id = c.id AND sc.status = 'done'
+          WHERE c.user_id = ? AND c.date LIKE ?
+        `).get(uid, month + '%');
+        return json(res, 200, {
+          month,
+          userId: Number(uid),
+          gold: coins.gold || 0,
+          silver: coins.silver || 0,
+          bronze: coins.bronze || 0,
+        });
+      }
+
       // 上传音频：POST /api/audio?lang=cn|en  body=原始音频字节
       if (p === '/api/audio' && req.method === 'POST') {
         const u = needLogin(req, res);

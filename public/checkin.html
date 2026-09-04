@@ -66,6 +66,7 @@
   <div class="card">
     <div class="calendar-heading">
       <h2>📅 打卡日历</h2>
+      <span class="coin-stats" id="coinStats" aria-live="polite"></span>
       <div class="calendar-nav">
         <button type="button" id="calendarPrev" aria-label="上月">‹</button>
         <span id="calendarMonth"></span>
@@ -418,8 +419,21 @@ function medalFor(score) {
 
 async function loadCalendar() {
   const requestedMonth = calendarMonth;
-  const { days } = await api('/api/month?month=' + encodeURIComponent(requestedMonth));
+  const encodedMonth = encodeURIComponent(requestedMonth);
+  const [{ days }, coins] = await Promise.all([
+    api('/api/month?month=' + encodedMonth),
+    api('/api/coins?month=' + encodedMonth),
+  ]);
   if (requestedMonth !== calendarMonth) return;
+  const coinStats = document.getElementById('coinStats');
+  if (coins.gold + coins.silver + coins.bronze === 0) {
+    coinStats.textContent = '本月暂无金币';
+  } else {
+    coinStats.innerHTML =
+      `<span class="coin gold">金</span>×${coins.gold}` +
+      `<span class="coin silver">银</span>×${coins.silver}` +
+      `<span class="coin bronze">铜</span>×${coins.bronze}`;
+  }
   const [year, monthNumber] = calendarMonth.split('-').map(Number);
   const month = monthNumber - 1;
   document.getElementById('calendarMonth').textContent = `${year}年${monthNumber}月`;

@@ -147,6 +147,11 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .coin.bronze { background: radial-gradient(circle at 35% 30%, #e8b48a, #c07c3a 55%, #8a5220); }
 .calendar-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .calendar-heading h2 { margin-bottom: 0; }
+.coin-stats {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+  color: var(--sub); font-size: 12px; white-space: nowrap;
+}
+.coin-stats .coin { width: 14px; height: 14px; flex-basis: 14px; font-size: 8px; }
 .calendar-nav { display: flex; align-items: center; gap: 7px; color: var(--sub); font-size: 13px; white-space: nowrap; }
 .calendar-nav button {
   width: 28px; height: 28px; border-radius: 8px; background: #f0ece3; color: var(--ink);
