@@ -128,7 +128,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .calendar .day.selectable:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(61,52,41,.16); }
 .calendar .day.selectable:focus-visible { outline: 2.5px solid var(--blue); outline-offset: 2px; }
 .calendar .day.selected { box-shadow: 0 0 0 3px var(--blue); }
-.calendar .day .mini { font-size: 9px; font-weight: 400; }
+.calendar .day .mini { font-size: 10px; line-height: 1; font-weight: 400; }
 .calendar-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .calendar-heading h2 { margin-bottom: 0; }
 .calendar-nav { display: flex; align-items: center; gap: 7px; color: var(--sub); font-size: 13px; white-space: nowrap; }

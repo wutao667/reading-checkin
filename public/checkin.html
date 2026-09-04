@@ -409,6 +409,13 @@ async function setCurrentDate(date) {
   await Promise.all([refreshStatus(), loadCalendar()]);
 }
 
+function medalFor(score) {
+  if (score == null) return '';
+  if (score >= 90) return '🥇';
+  if (score >= 80) return '🥈';
+  return '🥉';
+}
+
 async function loadCalendar() {
   const requestedMonth = calendarMonth;
   const { days } = await api('/api/month?month=' + encodeURIComponent(requestedMonth));
@@ -433,20 +440,22 @@ async function loadCalendar() {
     const canSelect = date <= todayCN();
     let cls = 'day';
     let mini = '';
-    if (rec) {
-      const cnDone = rec.cn && (rec.cnDuration || 0) >= 180;
-      const enDone = rec.en && (rec.enDuration || 0) >= 180;
-      const flowers = (cnDone ? 1 : 0) + (enDone ? 1 : 0);
-      if (flowers === 2) cls += ' full';
-      else if (flowers === 1) cls += ' half';
-      mini = '🌸'.repeat(flowers);
-    }
+    const cnMedal = medalFor(rec ? rec.cnScore : null);
+    const enMedal = medalFor(rec ? rec.enScore : null);
+    const medalCount = (cnMedal ? 1 : 0) + (enMedal ? 1 : 0);
+    mini = cnMedal + enMedal;
+    if (medalCount === 2) cls += ' full';
+    else if (medalCount === 1) cls += ' half';
     if (isToday) cls += ' today';
     if (canSelect) cls += ' selectable';
     if (date === currentDate) cls += ' selected';
+    const scoreHint = rec
+      ? [rec.cnScore == null ? '' : `中文${rec.cnScore}`, rec.enScore == null ? '' : `英文${rec.enScore}`].filter(Boolean).join(' · ')
+      : '';
+    const title = `${isToday ? '切换到今天打卡' : isYesterday ? '补昨天的打卡' : canSelect ? '查看当天记录' : '只能查看过去日期'}${scoreHint ? ` · ${scoreHint}` : ''}`;
     const attrs = canSelect
-      ? ` role="button" tabindex="0" data-date="${date}" title="${isToday ? '切换到今天打卡' : isYesterday ? '补昨天的打卡' : '查看当天记录'}"`
-      : ' title="只能查看过去日期"';
+      ? ` role="button" tabindex="0" data-date="${date}" title="${title}"`
+      : ` title="${title}"`;
     html += `<div class="${cls}"${attrs}>${d}${mini ? `<span class="mini">${mini}</span>` : ''}</div>`;
   }
   html += '</div>';

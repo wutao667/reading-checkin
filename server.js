@@ -584,13 +584,24 @@ const server = http.createServer(async (req, res) => {
         const uid = url.searchParams.get('userId') || u.id;
         if (u.role !== 'admin' && uid != u.id) return json(res, 403, { error: '没有权限' });
         const month = url.searchParams.get('month') || monthStr();
-        const rows = db.prepare("SELECT date, cn_duration, cn_path, en_duration, en_path FROM checkins WHERE user_id = ? AND date LIKE ?").all(uid, month + '%');
+        const rows = db.prepare(`
+          SELECT c.date, c.cn_duration, c.cn_path, c.en_duration, c.en_path,
+                 scn.total AS cn_score, sen.total AS en_score
+          FROM checkins c
+          LEFT JOIN scores scn
+            ON scn.checkin_id = c.id AND scn.lang = 'cn' AND scn.status = 'done'
+          LEFT JOIN scores sen
+            ON sen.checkin_id = c.id AND sen.lang = 'en' AND sen.status = 'done'
+          WHERE c.user_id = ? AND c.date LIKE ?
+        `).all(uid, month + '%');
         return json(res, 200, { month, days: rows.map(r => ({
           date: r.date,
           cn: !!r.cn_path,
           cnDuration: r.cn_duration,
+          cnScore: r.cn_score ?? null,
           en: !!r.en_path,
           enDuration: r.en_duration,
+          enScore: r.en_score ?? null,
           done: !!(r.cn_path && r.en_path),
         })) });
       }
