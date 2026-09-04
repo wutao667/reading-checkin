@@ -96,7 +96,8 @@ function renderScore(lang, response) {
     el.textContent = `🏆 总分 ${Math.round(s.total)} · 发音 ${Math.round(s.accuracy)} · 流利度 ${Math.round(s.fluency * 100)}`;
     return 'done';
   }
-  el.textContent = '暂未评分';
+  el.classList.add('hidden');
+  el.textContent = '';
   return s.status;
 }
 

@@ -102,6 +102,8 @@ FFMPEG_PATH='/path/to/ffmpeg'
 
 任一智聆凭据缺失时评分功能静默禁用，并在启动日志中提示。腾讯云计费请以控制台为准；当前参考价格为后付费 5 元/千次，另有 1 万次调试包 9.9 元。
 
+历史录音可在配置上述环境变量后运行 `node backfill-scores.js` 补评分（可用 `--date=YYYY-MM-DD`、`--lang=cn|en` 筛选，`--yes` 跳过启动前 5 秒等待）。
+
 ### 5. 前端录音状态机
 每张录音卡片：`idle → recording（计时/自动停）→ recorded（试听/重录/保存）→ saved（可重录覆盖）`，用 `hidden` class 切换按钮组。
 
