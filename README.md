@@ -1,6 +1,6 @@
 # 花果山阅读打卡网站（Reading Check-in）
 
-学生阅读打卡系统：每天中文朗读录音 5 分钟 + 英文朗读录音 5 分钟，家长后台可查看记录并在线播放音频。
+学生阅读打卡系统：每天中文朗读录音 5 分钟 + 英文朗读录音 5 分钟，家长后台可查看记录、在线播放音频，并通过腾讯智聆自动评测发音和流利度。
 
 - 线上地址：https://dk.huaguo.site （备用：https://daka.huaguo.site ，测试：https://test.huaguo.site ）
 - 代码已在 GitHub 公共仓库。
@@ -82,6 +82,25 @@ checkins: id, user_id, date(YYYY-MM-DD), cn_path, cn_duration, cn_uploaded_at,
 ### 4. 音频方案
 - 前端 MediaRecorder 录 webm（Safari 用 mp4/m4a），保存时 `fetch` 把 Blob 作为 **raw body** 直接 POST（`POST /api/audio?lang=cn|en&duration=秒`），Content-Type 决定存储扩展名；不用 multipart，最简。
 - 音频用相对路径存 DB（相对项目根），播放走 `GET /api/audio/:userId/:date/:lang`（校验登录 + 权限）+ Range 支持。
+
+### 4.1 腾讯智聆自动评分
+
+- 打卡保存响应结束后进入内存队列异步评分，任何转码、网络或评测失败都不会影响打卡成功。
+- ffmpeg 跳过开头静音并截取首个 10 秒语音，转成 16kHz/16bit/单声道 WAV；有效语音不足 10 秒时显示「暂未评分」。
+- 使用新版 WSS 接口自由说模式（`eval_mode=3`、无参考文本），中文/英文分别使用 `16k_zh` / `16k_en`，保存总分、发音准确度和流利度；失败最多重试两次。
+- 重录会立刻将旧分数置为待评，新任务写回前还会核验音频版本，避免较早任务覆盖新录音。
+- 评分队列首版仅在内存中：服务在任务完成前重启会遗失 pending 任务，不会自动扫描历史音频补评。
+
+启用评分需为服务进程设置以下环境变量（不要把真实密钥写入仓库）：
+
+```bash
+TENCENT_ISE_APP_ID='<AppID>'
+TENCENT_ISE_SECRET_ID='<SecretID>'
+TENCENT_ISE_SECRET_KEY='<SecretKey>'
+FFMPEG_PATH='/path/to/ffmpeg'
+```
+
+任一智聆凭据缺失时评分功能静默禁用，并在启动日志中提示。腾讯云计费请以控制台为准；当前参考价格为后付费 5 元/千次，另有 1 万次调试包 9.9 元。
 
 ### 5. 前端录音状态机
 每张录音卡片：`idle → recording（计时/自动停）→ recorded（试听/重录/保存）→ saved（可重录覆盖）`，用 `hidden` class 切换按钮组。

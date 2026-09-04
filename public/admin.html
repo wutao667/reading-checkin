@@ -44,7 +44,7 @@
     <h2>📋 打卡记录 <span id="recCount" style="font-size:13px; color:var(--sub);"></span></h2>
     <div style="overflow-x:auto;">
       <table id="recTable">
-        <thead><tr><th>日期</th><th>学生</th><th>中文</th><th>英文</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr><th>日期</th><th>学生</th><th>中文</th><th>英文</th><th>评分</th><th>状态</th><th>操作</th></tr></thead>
         <tbody></tbody>
       </table>
       <div id="recEmpty" style="text-align:center; color:var(--sub); padding:20px 0;" class="hidden">暂无记录</div>
@@ -131,9 +131,12 @@ async function loadRecords() {
     const cnCell = cnOk ? `${fmtDur(r.cn_duration)}<br><small style="color:var(--sub)">${fmtTime(r.cn_uploaded_at)}</small>` : '<span class="badge no">—</span>';
     const enCell = enOk ? `${fmtDur(r.en_duration)}<br><small style="color:var(--sub)">${fmtTime(r.en_uploaded_at)}</small>` : '<span class="badge no">—</span>';
     const ops = [];
+    const scoreText = (score, status) => status === 'done' && score != null
+      ? Math.round(score) : status === 'failed' || status === 'skipped' ? '暂未评分' : '—';
+    const scores = `中 ${scoreText(r.cn_score, r.cn_score_status)}<br>英 ${scoreText(r.en_score, r.en_score_status)}`;
     if (cnOk) ops.push(`<button class="btn btn-sm btn-ghost" onclick="playAudio('/api/audio/${r.user_id}/${r.date}/cn','${r.name} ${r.date} 中文 ${fmtDur(r.cn_duration)}')">▶ 中文</button>`);
     if (enOk) ops.push(`<button class="btn btn-sm btn-ghost" onclick="playAudio('/api/audio/${r.user_id}/${r.date}/en','${r.name} ${r.date} 英文 ${fmtDur(r.en_duration)}')">▶ 英文</button>`);
-    tr.innerHTML = `<td>${r.date}</td><td>${nameMap[r.user_id] || r.name}</td><td>${cnCell}</td><td>${enCell}</td><td>${status}</td><td>${ops.join(' ') || '—'}</td>`;
+    tr.innerHTML = `<td>${r.date}</td><td>${nameMap[r.user_id] || r.name}</td><td>${cnCell}</td><td>${enCell}</td><td class="score-cell">${scores}</td><td>${status}</td><td>${ops.join(' ') || '—'}</td>`;
     tbody.appendChild(tr);
   }
 }

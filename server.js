@@ -2,6 +2,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
@@ -53,7 +54,161 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_checkins_user_date ON checkins(user_id, date);
+CREATE TABLE IF NOT EXISTS scores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  checkin_id INTEGER NOT NULL,
+  lang TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  total REAL, accuracy REAL, fluency REAL,
+  error TEXT,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  scored_at TEXT,
+  UNIQUE(checkin_id, lang)
+);
 `);
+
+// ---------- 腾讯智聆口语评测 ----------
+const ISE_CONFIG = {
+  appId: (process.env.TENCENT_ISE_APP_ID || '').trim(),
+  secretId: (process.env.TENCENT_ISE_SECRET_ID || '').trim(),
+  secretKey: (process.env.TENCENT_ISE_SECRET_KEY || '').trim(),
+};
+const ISE_ENABLED = !!(ISE_CONFIG.appId && ISE_CONFIG.secretId && ISE_CONFIG.secretKey);
+if (!ISE_ENABLED) console.log('[ISE] 未配置腾讯智聆，评分已禁用');
+
+function runFile(command, args, options = {}) {
+  return new Promise((resolve, reject) => execFile(command, args, options, (error, stdout, stderr) => {
+    if (error) { error.stderr = stderr; reject(error); } else resolve({ stdout, stderr });
+  }));
+}
+
+async function extractVoiceSegment(srcFile, dstWav) {
+  try {
+    await runFile(process.env.FFMPEG_PATH || 'ffmpeg', [
+      '-y', '-v', 'error', '-i', srcFile,
+      '-af', 'silenceremove=start_periods=1:start_duration=0.1:start_threshold=-40dB',
+      '-t', '10', '-ar', '16000', '-ac', '1', '-sample_fmt', 's16', '-f', 'wav', dstWav,
+    ], { timeout: 45000 });
+    // 16kHz / 16bit / mono 的 10 秒数据约 320KB；容许 WAV 头和极小舍入差。
+    return fs.statSync(dstWav).size >= 319000;
+  } catch (error) {
+    fs.promises.unlink(dstWav).catch(() => {});
+    throw new Error(`音频转码失败: ${error.stderr || error.message}`.slice(0, 500));
+  }
+}
+
+function buildSignedUrl(appId, secretId, secretKey, timestamp, expired, options = {}) {
+  const params = {
+    eval_mode: 3,
+    expired,
+    nonce: options.nonce || crypto.randomInt(1, 1000000000),
+    rec_mode: 1,
+    ref_text: '',
+    score_coeff: '1.0',
+    secretid: secretId,
+    sentence_info_enabled: 0,
+    server_engine_type: options.engine || '16k_zh',
+    text_mode: 0,
+    timestamp,
+    voice_format: 1,
+    voice_id: options.voiceId || crypto.randomUUID(),
+  };
+  const keys = Object.keys(params).sort();
+  const unsignedQuery = keys.map(key => `${key}=${params[key]}`).join('&');
+  const signingText = `soe.cloud.tencent.com/soe/api/${appId}?${unsignedQuery}`;
+  const signature = crypto.createHmac('sha1', secretKey).update(signingText).digest('base64');
+  const encodedQuery = keys.map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`).join('&');
+  return `wss://soe.cloud.tencent.com/soe/api/${encodeURIComponent(appId)}?${encodedQuery}&signature=${encodeURIComponent(signature)}`;
+}
+
+function evaluateWav(wavPath, lang) {
+  return new Promise((resolve, reject) => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signedUrl = buildSignedUrl(ISE_CONFIG.appId, ISE_CONFIG.secretId, ISE_CONFIG.secretKey,
+      timestamp, timestamp + 300, { engine: lang === 'cn' ? '16k_zh' : '16k_en' });
+    const ws = new WebSocket(signedUrl);
+    let settled = false;
+    let audioSent = false;
+    let lastResult = null;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { ws.close(); } catch (_) {}
+      error ? reject(error) : resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error('评测超时')), 30000);
+    ws.addEventListener('message', async event => {
+      try {
+        const data = JSON.parse(typeof event.data === 'string' ? event.data : await event.data.text());
+        if (data.code !== 0) return finish(new Error(`腾讯智聆 ${data.code}: ${data.message || '未知错误'}`));
+        if (!audioSent && data.message === 'success' && !data.message_id) {
+          audioSent = true;
+          ws.send(await fs.promises.readFile(wavPath));
+          ws.send(JSON.stringify({ type: 'end' }));
+        }
+        if (data.result) lastResult = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+        if (data.final === 1) {
+          if (!lastResult) return finish(new Error('评测结束但未返回评分结果'));
+          const score = Number(lastResult.SuggestedScore);
+          const accuracy = Number(lastResult.PronAccuracy);
+          const fluency = Number(lastResult.PronFluency);
+          if (![score, accuracy, fluency].every(Number.isFinite)) return finish(new Error('评分结果字段无效'));
+          finish(null, { score, accuracy, fluency });
+        }
+      } catch (error) { finish(new Error(`评测响应解析失败: ${error.message}`)); }
+    });
+    ws.addEventListener('error', () => finish(new Error('评测 WebSocket 连接失败')));
+    ws.addEventListener('close', () => { if (!settled) finish(new Error('评测连接提前关闭')); });
+  });
+}
+
+const scoreQueue = [];
+let scoreWorkerRunning = false;
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function enqueueScore(task) {
+  if (!ISE_ENABLED) return;
+  db.prepare(`INSERT INTO scores (checkin_id, lang, status, total, accuracy, fluency, error, scored_at)
+    VALUES (?, ?, 'pending', NULL, NULL, NULL, NULL, NULL)
+    ON CONFLICT(checkin_id, lang) DO UPDATE SET status='pending', total=NULL, accuracy=NULL, fluency=NULL, error=NULL, scored_at=NULL, created_at=datetime('now','localtime')`).run(task.checkinId, task.lang);
+  scoreQueue.push(task);
+  setImmediate(processScoreQueue);
+}
+async function processScoreQueue() {
+  if (scoreWorkerRunning) return;
+  scoreWorkerRunning = true;
+  while (scoreQueue.length) {
+    const task = scoreQueue.shift();
+    const current = db.prepare(`SELECT ${task.lang}_path p, ${task.lang}_uploaded_at at FROM checkins WHERE id = ?`).get(task.checkinId);
+    if (!current || current.p !== task.relPath || current.at !== task.uploadedAt) continue;
+    const temp = path.join(os.tmpdir(), `checkin-ise-${process.pid}-${crypto.randomUUID()}.wav`);
+    const isLatest = () => {
+      const row = db.prepare(`SELECT ${task.lang}_path p, ${task.lang}_uploaded_at at FROM checkins WHERE id = ?`).get(task.checkinId);
+      return !!row && row.p === task.relPath && row.at === task.uploadedAt;
+    };
+    try {
+      const enough = await extractVoiceSegment(path.join(ROOT, task.relPath), temp);
+      if (!enough) {
+        if (isLatest()) db.prepare("UPDATE scores SET status='skipped', error='有效语音不足', scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?").run(task.checkinId, task.lang);
+        continue;
+      }
+      let result, lastError;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try { result = await evaluateWav(temp, task.lang); break; }
+        catch (error) { lastError = error; if (attempt < 2) await delay(attempt === 0 ? 2000 : 5000); }
+      }
+      if (!isLatest()) continue;
+      if (result) db.prepare("UPDATE scores SET status='done', total=?, accuracy=?, fluency=?, error=NULL, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
+        .run(result.score, result.accuracy, result.fluency, task.checkinId, task.lang);
+      else db.prepare("UPDATE scores SET status='failed', error=?, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
+        .run(String(lastError?.message || '评分失败').slice(0, 500), task.checkinId, task.lang);
+    } catch (error) {
+      if (isLatest()) db.prepare("UPDATE scores SET status='failed', error=?, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
+        .run(String(error.message || error).slice(0, 500), task.checkinId, task.lang);
+    } finally { fs.promises.unlink(temp).catch(() => {}); }
+  }
+  scoreWorkerRunning = false;
+}
 
 // ---------- 工具函数 ----------
 function hashPassword(pw, salt) {
@@ -470,15 +625,39 @@ const server = http.createServer(async (req, res) => {
 
         const now = new Date().toISOString();
         const colPath = `${lang}_path`, colDur = `${lang}_duration`, colAt = `${lang}_uploaded_at`;
+        let checkinId;
         if (old) {
           db.prepare(`UPDATE checkins SET ${colPath} = ?, ${colDur} = ?, ${colAt} = ?, updated_at = datetime('now','localtime') WHERE id = ?`).run(rel, dur, now, old.id);
+          checkinId = old.id;
         } else {
           const cols = { cn_path: null, cn_duration: null, cn_uploaded_at: null, en_path: null, en_duration: null, en_uploaded_at: null };
           cols[colPath] = rel; cols[colDur] = dur; cols[colAt] = now;
-          db.prepare(`INSERT INTO checkins (user_id, date, ${colPath}, ${colDur}, ${colAt}) VALUES (?, ?, ?, ?, ?)`).run(u.id, date, rel, dur, now);
+          const inserted = db.prepare(`INSERT INTO checkins (user_id, date, ${colPath}, ${colDur}, ${colAt}) VALUES (?, ?, ?, ?, ?)`).run(u.id, date, rel, dur, now);
+          checkinId = Number(inserted.lastInsertRowid);
         }
         console.log(`[打卡] ${u.name}(${u.id}) ${date} ${lang === 'cn' ? '中文' : '英文'} ${dur}s ${buf.length}B`);
-        return json(res, 200, { ok: true, duration: dur, size: buf.length });
+        // 即使评分配置后来被关闭，重录也不能继续展示旧录音的得分。
+        db.prepare('DELETE FROM scores WHERE checkin_id = ? AND lang = ?').run(checkinId, lang);
+        json(res, 200, { ok: true, duration: dur, size: buf.length, scoring: ISE_ENABLED });
+        // 响应已经结束；评分任务的转码、网络请求和重试均不影响打卡保存。
+        enqueueScore({ checkinId, lang, relPath: rel, uploadedAt: now });
+        return;
+      }
+
+      // 单条评分（学生本人或管理员）
+      if (p === '/api/score' && req.method === 'GET') {
+        const u = needLogin(req, res);
+        if (!u) return;
+        const uid = url.searchParams.get('userId') || u.id;
+        if (u.role !== 'admin' && uid != u.id) return json(res, 403, { error: '没有权限' });
+        const date = url.searchParams.get('date') || todayStr();
+        const lang = url.searchParams.get('lang');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !['cn', 'en'].includes(lang)) return json(res, 400, { error: '参数错误' });
+        if (!ISE_ENABLED) return json(res, 200, { enabled: false, score: null });
+        const row = db.prepare(`SELECT s.status, s.total, s.accuracy, s.fluency, s.error, s.scored_at
+          FROM checkins c LEFT JOIN scores s ON s.checkin_id=c.id AND s.lang=?
+          WHERE c.user_id=? AND c.date=?`).get(lang, uid, date);
+        return json(res, 200, { enabled: true, score: row && row.status ? row : null });
       }
 
       // 播放音频：GET /api/audio/:userId/:date/:lang
@@ -513,12 +692,18 @@ const server = http.createServer(async (req, res) => {
         const to = url.searchParams.get('to') || '2099-12-31';
         let rows;
         if (userId) {
-          rows = db.prepare(`SELECT c.id, c.user_id, c.date, c.cn_duration, c.cn_uploaded_at, c.en_duration, c.en_uploaded_at, u.name
+          rows = db.prepare(`SELECT c.id, c.user_id, c.date, c.cn_duration, c.cn_uploaded_at, c.en_duration, c.en_uploaded_at, u.name,
+            cn.total cn_score, cn.status cn_score_status, en.total en_score, en.status en_score_status
             FROM checkins c JOIN users u ON u.id = c.user_id
+            LEFT JOIN scores cn ON cn.checkin_id=c.id AND cn.lang='cn'
+            LEFT JOIN scores en ON en.checkin_id=c.id AND en.lang='en'
             WHERE c.user_id = ? AND c.date BETWEEN ? AND ? ORDER BY c.date DESC, c.user_id`).all(userId, from, to);
         } else {
-          rows = db.prepare(`SELECT c.id, c.user_id, c.date, c.cn_duration, c.cn_uploaded_at, c.en_duration, c.en_uploaded_at, u.name
+          rows = db.prepare(`SELECT c.id, c.user_id, c.date, c.cn_duration, c.cn_uploaded_at, c.en_duration, c.en_uploaded_at, u.name,
+            cn.total cn_score, cn.status cn_score_status, en.total en_score, en.status en_score_status
             FROM checkins c JOIN users u ON u.id = c.user_id
+            LEFT JOIN scores cn ON cn.checkin_id=c.id AND cn.lang='cn'
+            LEFT JOIN scores en ON en.checkin_id=c.id AND en.lang='en'
             WHERE c.date BETWEEN ? AND ? ORDER BY c.date DESC, c.user_id`).all(from, to);
         }
         return json(res, 200, { records: rows });

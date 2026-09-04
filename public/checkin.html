@@ -39,6 +39,7 @@
       </div>
       <audio class="rec-audio hidden" id="preview-cn" controls></audio>
       <div class="rec-saved-info hidden" id="saved-cn"></div>
+      <div class="score-info hidden" id="score-cn"></div>
     </div>
   </div>
 
@@ -57,6 +58,7 @@
       </div>
       <audio class="rec-audio hidden" id="preview-en" controls></audio>
       <div class="rec-saved-info hidden" id="saved-en"></div>
+      <div class="score-info hidden" id="score-en"></div>
     </div>
   </div>
 
@@ -82,6 +84,35 @@ const user = await guard(false);
 if (!user) return;
 let currentDate = todayCN();
 let calendarMonth = thisMonthCN();
+const scorePollTokens = { cn: 0, en: 0 };
+
+function renderScore(lang, response) {
+  const el = document.getElementById(`score-${lang}`);
+  if (!response.enabled || !response.score) { el.classList.add('hidden'); return 'none'; }
+  const s = response.score;
+  el.classList.remove('hidden');
+  if (s.status === 'pending') { el.textContent = '🔍 评分中…'; return 'pending'; }
+  if (s.status === 'done') {
+    el.textContent = `🏆 总分 ${Math.round(s.total)} · 发音 ${Math.round(s.accuracy)} · 流利度 ${Math.round(s.fluency * 100)}`;
+    return 'done';
+  }
+  el.textContent = '暂未评分';
+  return s.status;
+}
+
+async function loadScore(lang, poll = false, date = currentDate) {
+  const token = ++scorePollTokens[lang];
+  for (let attempt = 0; attempt < (poll ? 20 : 1); attempt++) {
+    if (attempt) await new Promise(resolve => setTimeout(resolve, 3000));
+    if (token !== scorePollTokens[lang] || date !== currentDate) return;
+    try {
+      const response = await api(`/api/score?date=${encodeURIComponent(date)}&lang=${lang}`);
+      const status = renderScore(lang, response);
+      if (status !== 'pending') return;
+    } catch (_) { return; }
+  }
+  if (token === scorePollTokens[lang]) document.getElementById(`score-${lang}`).textContent = '暂未评分';
+}
 
 function yesterdayCN() {
   const d = new Date();
@@ -123,6 +154,8 @@ async function refreshStatus() {
   document.getElementById('todayStatus').textContent = `${cn} ｜ ${en}`;
   syncCardState('cn', t.cn);
   syncCardState('en', t.en);
+  loadScore('cn');
+  loadScore('en');
   setRecordingAvailability();
 }
 
@@ -343,6 +376,10 @@ function makeRecorder(lang) {
       preview.classList.add('hidden');
       show(startBtn);
       await refreshStatus();
+      if (data.scoring) {
+        renderScore(lang, { enabled: true, score: { status: 'pending' } });
+        loadScore(lang, true, currentDate);
+      }
     } catch (e) {
       toast(e.message || '保存失败，请重试');
     } finally {
