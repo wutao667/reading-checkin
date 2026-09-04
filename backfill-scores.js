@@ -27,9 +27,12 @@ function parseOptions(argv) {
   const dates = new Set();
   let lang = null;
   let yes = false;
+  let force = false;
   for (const arg of argv) {
     if (arg === '--yes') {
       yes = true;
+    } else if (arg === '--force' || arg === '--re-eval') {
+      force = true;
     } else if (arg.startsWith('--date=')) {
       const values = arg.slice('--date='.length).split(',').filter(Boolean);
       if (!values.length || values.some(value => !/^\d{4}-\d{2}-\d{2}$/.test(value))) {
@@ -45,7 +48,7 @@ function parseOptions(argv) {
       fail(`未知选项：${arg}`);
     }
   }
-  return { dates, lang, yes };
+  return { dates, lang, yes, force };
 }
 
 function runFile(command, args, options = {}) {
@@ -159,16 +162,29 @@ async function main() {
     const scoreStatus = db.prepare('SELECT status FROM scores WHERE checkin_id = ? AND lang = ?');
     const tasks = [];
     let skipped = 0;
+    let existingDone = 0;
     for (const row of rows) {
       if (options.dates.size && !options.dates.has(row.date)) continue;
       for (const lang of ['cn', 'en']) {
         const relPath = row[`${lang}_path`];
         if (!relPath || (options.lang && options.lang !== lang)) continue;
-        if (scoreStatus.get(row.id, lang)?.status === 'done') { skipped++; continue; }
-        tasks.push({ checkinId: row.id, date: row.date, name: row.name || `用户${row.id}`, lang, relPath });
+        const existingScore = scoreStatus.get(row.id, lang);
+        if (!options.force && existingScore?.status === 'done') { skipped++; continue; }
+        if (options.force && existingScore?.status === 'done') existingDone++;
+        tasks.push({
+          checkinId: row.id,
+          date: row.date,
+          name: row.name || `用户${row.id}`,
+          lang,
+          relPath,
+          hasExistingScore: Boolean(existingScore),
+        });
       }
     }
 
+    if (options.force) {
+      console.log(`⚠️ 强制重评模式：将覆盖已有评分（${existingDone} 条）`);
+    }
     console.log(`将评测 ${tasks.length} 条，确认后 5 秒开始${options.yes ? '（--yes 已跳过等待）' : ''}`);
     if (!options.yes && tasks.length) await delay(5000);
 
@@ -194,9 +210,12 @@ async function main() {
         console.log(`${prefix} → 总分 ${result.total}`);
       } catch (error) {
         const message = String(error.message || error).slice(0, 500);
-        saveFailed.run(task.checkinId, task.lang, message);
+        if (!options.force || !task.hasExistingScore) {
+          saveFailed.run(task.checkinId, task.lang, message);
+        }
         failed++;
-        console.error(`${prefix} → 失败：${message}`);
+        const preserved = options.force && task.hasExistingScore ? '（已保留旧评分记录）' : '';
+        console.error(`${prefix} → 失败：${message}${preserved}`);
       } finally {
         await fs.promises.unlink(temp).catch(() => {});
       }

@@ -105,6 +105,8 @@ FFMPEG_PATH='/path/to/ffmpeg'
 
 历史录音可在配置上述环境变量后运行 `node backfill-scores.js` 补评分（可用 `--date=YYYY-MM-DD`、`--lang=cn|en` 筛选，`--yes` 跳过启动前 5 秒等待）。脚本每次启动都会幂等重算已完成记录的总分，使其符合上述口径；该迁移只重算总分，不会按新的苛刻指数重新评测历史录音。
 
+需要按新标准重评中文历史评分时，运行 `node backfill-scores.js --lang=cn --force`；强制重评仅在新评测成功后覆盖旧评分，失败时保留已有记录。
+
 ### 5. 前端录音状态机
 每张录音卡片：`idle → recording（计时/自动停）→ recorded（试听/重录/保存）→ saved（可重录覆盖）`，用 `hidden` class 切换按钮组。
 
