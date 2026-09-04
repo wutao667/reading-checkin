@@ -411,9 +411,9 @@ async function setCurrentDate(date) {
 
 function medalFor(score) {
   if (score == null) return '';
-  if (score >= 90) return '🥇';
-  if (score >= 80) return '🥈';
-  return '🥉';
+  if (score >= 90) return 'gold';
+  if (score >= 80) return 'silver';
+  return 'bronze';
 }
 
 async function loadCalendar() {
@@ -443,7 +443,11 @@ async function loadCalendar() {
     const cnMedal = medalFor(rec ? rec.cnScore : null);
     const enMedal = medalFor(rec ? rec.enScore : null);
     const medalCount = (cnMedal ? 1 : 0) + (enMedal ? 1 : 0);
-    mini = cnMedal + enMedal;
+    const coinLabels = { gold: '金', silver: '银', bronze: '铜' };
+    mini = [cnMedal, enMedal]
+      .filter(Boolean)
+      .map(type => `<span class="coin ${type}">${coinLabels[type]}</span>`)
+      .join('');
     if (medalCount === 2) cls += ' full';
     else if (medalCount === 1) cls += ' half';
     if (isToday) cls += ' today';
