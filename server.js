@@ -76,6 +76,10 @@ function isValidCheckinDate(date) {
   return date === todayStr() || date === yesterdayStr();
 }
 
+function isViewableDate(date) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= todayStr();
+}
+
 function monthStr() {
   return todayStr().slice(0, 7);
 }
@@ -412,7 +416,7 @@ const server = http.createServer(async (req, res) => {
         if (u.role !== 'admin' && uid != u.id) return json(res, 403, { error: '没有权限' });
         const date = url.searchParams.get('date') || todayStr();
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json(res, 400, { error: '日期格式错误' });
-        if (!isValidCheckinDate(date)) return json(res, 400, { error: '只能补昨天的打卡' });
+        if (!isViewableDate(date)) return json(res, 400, { error: '不能查看未来日期' });
         const r = db.prepare('SELECT cn_path, cn_duration, cn_uploaded_at, en_path, en_duration, en_uploaded_at FROM checkins WHERE user_id = ? AND date = ?').get(uid, date);
         const mk = (path_, dur, at) => path_ ? { saved: true, duration: dur, uploadedAt: at, url: `/api/audio/${uid}/${date}/cn` } : { saved: false };
         return json(res, 200, { date, cn: r && r.cn_path ? mk(r.cn_path, r.cn_duration, r.cn_uploaded_at) : { saved: false }, en: r && r.en_path ? { ...mk(r.en_path, r.en_duration, r.en_uploaded_at), url: `/api/audio/${uid}/${date}/en` } : { saved: false } });

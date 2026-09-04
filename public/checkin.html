@@ -90,15 +90,25 @@ function yesterdayCN() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+function isViewableDate(date) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= todayCN();
+}
+
 function updateDateHeader() {
   const isToday = currentDate === todayCN();
-  document.getElementById('dateLabel').textContent = isToday ? '今天' : '昨天';
+  const isYesterday = currentDate === yesterdayCN();
+  document.getElementById('dateLabel').textContent = isToday ? '今天' : isYesterday ? '昨天' : '查看日期';
   document.getElementById('today').textContent = currentDate.replace(/-/g, '.');
-  document.getElementById('statusTitle').textContent = isToday ? '🗓️ 今日打卡' : '🗓️ 昨日补打卡';
+  document.getElementById('statusTitle').textContent = isToday
+    ? '🗓️ 今日打卡'
+    : isYesterday ? '🗓️ 昨日补打卡' : `📖 查看记录 · ${currentDate}`;
   document.getElementById('dateBarText').textContent = isToday
     ? `今天 · ${currentDate}`
-    : `🔄 补打卡 ${currentDate}（昨天）`;
-  document.getElementById('dateBar').classList.toggle('makeup', !isToday);
+    : isYesterday
+      ? `🔄 补打卡 ${currentDate}（昨天）`
+      : '📖 查看打卡记录（仅可回听，补打卡限昨天）';
+  document.getElementById('dateBar').classList.toggle('makeup', isYesterday);
+  document.getElementById('dateBar').classList.toggle('view-only', !isToday && !isYesterday);
   document.getElementById('backToday').classList.toggle('hidden', isToday);
 }
 
@@ -113,6 +123,22 @@ async function refreshStatus() {
   document.getElementById('todayStatus').textContent = `${cn} ｜ ${en}`;
   syncCardState('cn', t.cn);
   syncCardState('en', t.en);
+  setRecordingAvailability();
+}
+
+function setRecordingAvailability() {
+  const isViewOnly = currentDate < yesterdayCN();
+  ['cn', 'en'].forEach(lang => {
+    const buttons = ['start', 'pause', 'stop', 'save', 'again']
+      .map(id => document.getElementById(`${id}-${lang}`));
+    buttons.forEach(button => button.classList.add('hidden'));
+    if (isViewOnly) {
+      document.getElementById(`hint-${lang}`).textContent = '📖 该日期仅可查看回听，补打卡限昨天';
+    } else {
+      buttons[0].classList.remove('hidden');
+      document.getElementById(`hint-${lang}`).textContent = '点击下方按钮开始录音，5 分钟到会自动停止';
+    }
+  });
 }
 
 function syncCardState(lang, st) {
@@ -121,7 +147,8 @@ function syncCardState(lang, st) {
   if (st.saved) {
     tag.textContent = '已打卡';
     tag.className = 'status-tag tag-done';
-    savedInfo.textContent = `已保存 · 时长 ${fmtDur(st.duration)} · ${fmtTime(st.uploadedAt)}（可直接重录覆盖） `;
+    const savedSuffix = currentDate < yesterdayCN() ? '' : '（可直接重录覆盖）';
+    savedInfo.textContent = `已保存 · 时长 ${fmtDur(st.duration)} · ${fmtTime(st.uploadedAt)}${savedSuffix} `;
     const listenBtn = document.createElement('button');
     listenBtn.type = 'button';
     listenBtn.className = 'btn btn-ghost';
@@ -211,6 +238,11 @@ function makeRecorder(lang) {
   }
 
   startBtn.addEventListener('click', async () => {
+    const isViewOnly = currentDate < yesterdayCN();
+    if (isViewOnly) {
+      toast('该日期仅可查看，补打卡限昨天');
+      return;
+    }
     try {
       rec.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
@@ -332,7 +364,7 @@ function shiftMonth(month, offset) {
 }
 
 async function setCurrentDate(date) {
-  if (date !== todayCN() && date !== yesterdayCN()) return;
+  if (!isViewableDate(date)) return;
   currentDate = date;
   calendarMonth = date.slice(0, 7);
   updateDateHeader();
@@ -359,7 +391,8 @@ async function loadCalendar() {
     const date = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const rec = byDate[date];
     const isToday = date === todayCN();
-    const canSelect = isToday || date === yesterdayCN();
+    const isYesterday = date === yesterdayCN();
+    const canSelect = date <= todayCN();
     let cls = 'day';
     let mini = '';
     if (rec) {
@@ -374,8 +407,8 @@ async function loadCalendar() {
     if (canSelect) cls += ' selectable';
     if (date === currentDate) cls += ' selected';
     const attrs = canSelect
-      ? ` role="button" tabindex="0" data-date="${date}" title="${isToday ? '切换到今天打卡' : '补昨天的打卡'}"`
-      : ' title="只能补昨天的打卡"';
+      ? ` role="button" tabindex="0" data-date="${date}" title="${isToday ? '切换到今天打卡' : isYesterday ? '补昨天的打卡' : '查看当天记录'}"`
+      : ' title="只能查看过去日期"';
     html += `<div class="${cls}"${attrs}>${d}${mini ? `<span class="mini">${mini}</span>` : ''}</div>`;
   }
   html += '</div>';

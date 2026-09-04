@@ -98,6 +98,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
   background: #edf5fc; color: var(--blue); font-size: 13px; font-weight: 700;
 }
 .date-bar.makeup { background: #fff0d7; color: #a86b00; }
+.date-bar.view-only { background: #e9eff5; color: #536b82; }
 .date-bar button { padding: 6px 10px; background: #fff; color: inherit; font-size: 12px; font-weight: 700; }
 
 /* 登录 */
