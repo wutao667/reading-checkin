@@ -155,7 +155,13 @@ async function main() {
   const db = new DatabaseSync(DB_PATH);
   try {
     db.prepare("UPDATE scores SET total = (accuracy + fluency * 100) / 2 WHERE status = 'done'").run();
-    const rows = db.prepare(`SELECT c.id, c.date, c.cn_path, c.en_path, u.name
+    db.prepare(`UPDATE scores
+      SET status='skipped', total=NULL, accuracy=NULL, fluency=NULL, error='时长不足3分钟'
+      WHERE status='done' AND (
+        (lang='cn' AND EXISTS (SELECT 1 FROM checkins c WHERE c.id = checkin_id AND c.cn_duration < 180)) OR
+        (lang='en' AND EXISTS (SELECT 1 FROM checkins c WHERE c.id = checkin_id AND c.en_duration < 180))
+      )`).run();
+    const rows = db.prepare(`SELECT c.id, c.date, c.cn_path, c.cn_duration, c.en_path, c.en_duration, u.name
       FROM checkins c LEFT JOIN users u ON u.id = c.user_id
       WHERE (c.cn_path IS NOT NULL OR c.en_path IS NOT NULL)
       ORDER BY c.date, c.id`).all();
@@ -168,6 +174,7 @@ async function main() {
       for (const lang of ['cn', 'en']) {
         const relPath = row[`${lang}_path`];
         if (!relPath || (options.lang && options.lang !== lang)) continue;
+        if (!(row[`${lang}_duration`] >= 180)) { skipped++; continue; }
         const existingScore = scoreStatus.get(row.id, lang);
         if (!options.force && existingScore?.status === 'done') { skipped++; continue; }
         if (options.force && existingScore?.status === 'done') existingDone++;

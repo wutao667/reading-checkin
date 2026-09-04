@@ -587,7 +587,8 @@ const server = http.createServer(async (req, res) => {
         const month = url.searchParams.get('month') || monthStr();
         const rows = db.prepare(`
           SELECT c.date, c.cn_duration, c.cn_path, c.en_duration, c.en_path,
-                 scn.total AS cn_score, sen.total AS en_score
+                 CASE WHEN c.cn_duration >= 180 THEN scn.total ELSE NULL END AS cn_score,
+                 CASE WHEN c.en_duration >= 180 THEN sen.total ELSE NULL END AS en_score
           FROM checkins c
           LEFT JOIN scores scn
             ON scn.checkin_id = c.id AND scn.lang = 'cn' AND scn.status = 'done'
@@ -625,6 +626,8 @@ const server = http.createServer(async (req, res) => {
             SUM(CASE WHEN sc.total < 80 THEN 1 ELSE 0 END) AS bronze
           FROM checkins c
           JOIN scores sc ON sc.checkin_id = c.id AND sc.status = 'done'
+            AND ((sc.lang = 'cn' AND c.cn_duration >= 180)
+              OR (sc.lang = 'en' AND c.en_duration >= 180))
           WHERE c.user_id = ? AND c.date LIKE ?
         `).get(uid, month + '%');
         return json(res, 200, {
@@ -677,11 +680,19 @@ const server = http.createServer(async (req, res) => {
           checkinId = Number(inserted.lastInsertRowid);
         }
         console.log(`[打卡] ${u.name}(${u.id}) ${date} ${lang === 'cn' ? '中文' : '英文'} ${dur}s ${buf.length}B`);
-        // 即使评分配置后来被关闭，重录也不能继续展示旧录音的得分。
-        db.prepare('DELETE FROM scores WHERE checkin_id = ? AND lang = ?').run(checkinId, lang);
-        json(res, 200, { ok: true, duration: dur, size: buf.length, scoring: ISE_ENABLED });
+        if (dur >= 180) {
+          // 即使评分配置后来被关闭，重录也不能继续展示旧录音的得分。
+          db.prepare('DELETE FROM scores WHERE checkin_id = ? AND lang = ?').run(checkinId, lang);
+        } else {
+          db.prepare(`INSERT INTO scores (checkin_id, lang, status, total, accuracy, fluency, error, scored_at)
+            VALUES (?, ?, 'skipped', NULL, NULL, NULL, '时长不足3分钟', datetime('now','localtime'))
+            ON CONFLICT(checkin_id, lang) DO UPDATE SET status='skipped', total=NULL, accuracy=NULL,
+              fluency=NULL, error='时长不足3分钟', scored_at=datetime('now','localtime'), created_at=datetime('now','localtime')`)
+            .run(checkinId, lang);
+        }
+        json(res, 200, { ok: true, duration: dur, size: buf.length, scoring: ISE_ENABLED && dur >= 180 });
         // 响应已经结束；评分任务的转码、网络请求和重试均不影响打卡保存。
-        enqueueScore({ checkinId, lang, relPath: rel, uploadedAt: now });
+        if (dur >= 180) enqueueScore({ checkinId, lang, relPath: rel, uploadedAt: now });
         return;
       }
 
@@ -694,10 +705,14 @@ const server = http.createServer(async (req, res) => {
         const date = url.searchParams.get('date') || todayStr();
         const lang = url.searchParams.get('lang');
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !['cn', 'en'].includes(lang)) return json(res, 400, { error: '参数错误' });
-        if (!ISE_ENABLED) return json(res, 200, { enabled: false, score: null });
-        const row = db.prepare(`SELECT s.status, s.total, s.accuracy, s.fluency, s.error, s.scored_at
+        const row = db.prepare(`SELECT c.${lang}_duration AS duration,
+            s.status, s.total, s.accuracy, s.fluency, s.error, s.scored_at
           FROM checkins c LEFT JOIN scores s ON s.checkin_id=c.id AND s.lang=?
           WHERE c.user_id=? AND c.date=?`).get(lang, uid, date);
+        if (row && !(row.duration >= 180)) {
+          return json(res, 200, { enabled: ISE_ENABLED, score: null, durationShort: true });
+        }
+        if (!ISE_ENABLED) return json(res, 200, { enabled: false, score: null });
         return json(res, 200, { enabled: true, score: row && row.status ? row : null });
       }
 

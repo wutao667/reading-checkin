@@ -461,8 +461,8 @@ async function loadCalendar() {
     const canSelect = date <= todayCN();
     let cls = 'day';
     let mini = '';
-    const cnMedal = medalFor(rec ? rec.cnScore : null);
-    const enMedal = medalFor(rec ? rec.enScore : null);
+    const cnMedal = rec && rec.cnScore != null && (rec.cnDuration || 0) >= 180 ? medalFor(rec.cnScore) : '';
+    const enMedal = rec && rec.enScore != null && (rec.enDuration || 0) >= 180 ? medalFor(rec.enScore) : '';
     const medalCount = (cnMedal ? 1 : 0) + (enMedal ? 1 : 0);
     const coinLabels = { gold: '金', silver: '银', bronze: '铜' };
     mini = [cnMedal, enMedal]
@@ -475,7 +475,8 @@ async function loadCalendar() {
     if (canSelect) cls += ' selectable';
     if (date === currentDate) cls += ' selected';
     const scoreHint = rec
-      ? [rec.cnScore == null ? '' : `中文${rec.cnScore}`, rec.enScore == null ? '' : `英文${rec.enScore}`].filter(Boolean).join(' · ')
+      ? [rec.cnScore == null || (rec.cnDuration || 0) < 180 ? '' : `中文${rec.cnScore}`,
+          rec.enScore == null || (rec.enDuration || 0) < 180 ? '' : `英文${rec.enScore}`].filter(Boolean).join(' · ')
       : '';
     const title = `${isToday ? '切换到今天打卡' : isYesterday ? '补昨天的打卡' : canSelect ? '查看当天记录' : '只能查看过去日期'}${scoreHint ? ` · ${scoreHint}` : ''}`;
     const attrs = canSelect
