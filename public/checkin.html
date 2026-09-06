@@ -62,7 +62,7 @@
     </div>
   </div>
 
-  <details class="card audio-box" id="audioBox" open>
+  <details class="card audio-box" id="audioBox">
     <summary>📦 本地录音箱</summary>
     <p class="audio-box-note">自动保存最近 5 次录音，网络不好也不怕丢 📦</p>
     <p class="audio-box-hint" id="audioBoxHint" role="status" aria-live="polite"></p>
@@ -255,23 +255,26 @@ async function refreshLocalRecordings() {
         button.addEventListener('click', handler);
         row.appendChild(button);
       };
-      if (!recording.uploaded) addButton(localBusy.has(recording.id) ? '补传中…' : '补传', async () => {
+      addButton(localBusy.has(recording.id) ? '上传中…' : (recording.uploaded ? '🔄重新上传' : '⏳补传'), async () => {
         if (localBusy.has(recording.id)) return;
         localBusy.add(recording.id);
+        row.querySelectorAll('button').forEach(button => { button.disabled = true; });
+        row.querySelector('button').textContent = '上传中…';
         refreshLocalRecordings();
-        audioBoxHint.textContent = '正在补传，请稍候…';
+        audioBoxHint.textContent = '正在上传，请稍候…';
         try {
-          const data = await uploadAudio(Object.freeze({ ...recording }));
+          const { date, blob, duration, lang } = recording;
+          const data = await uploadAudio(Object.freeze({ date, blob, duration, lang }));
           await markLocalUploaded(recording.id);
-          audioBoxHint.textContent = '补传成功 ✅';
-          toast('补传成功 🎉');
+          audioBoxHint.textContent = '上传成功 ✅';
+          toast('上传成功 ✅');
           await Promise.all([refreshStatus(), loadCalendar()]).catch(error => {
-            console.error('[audio] 补传成功后刷新失败', error);
-            audioBoxHint.textContent = '补传成功，但状态刷新失败，请稍后刷新页面';
+            console.error('[audio] 上传成功后刷新失败', error);
+            audioBoxHint.textContent = '上传成功，但状态刷新失败，请稍后刷新页面';
           });
           if (data.scoring && recording.date === currentDate) loadScore(recording.lang, true, recording.date);
         } catch (error) {
-          console.error('[audio] 补传失败', error);
+          console.error('[audio] 上传失败', error);
           audioBoxHint.textContent = uploadErrorMessage(error);
           document.getElementById(`hint-${recording.lang}`).textContent = audioBoxHint.textContent;
           toast(audioBoxHint.textContent);
