@@ -119,6 +119,7 @@ async function loadScore(lang, poll = false, date = currentDate) {
     if (token !== scorePollTokens[lang] || date !== currentDate) return;
     try {
       const response = await api(`/api/score?date=${encodeURIComponent(date)}&lang=${lang}`);
+      if (token !== scorePollTokens[lang] || date !== currentDate) return;
       const status = renderScore(lang, response);
       if (status !== 'pending') return;
     } catch (_) { return; }
@@ -168,22 +169,10 @@ async function refreshStatus() {
   syncCardState('en', t.en);
   loadScore('cn');
   loadScore('en');
-  setRecordingAvailability();
 }
 
 function setRecordingAvailability() {
-  const isViewOnly = currentDate < yesterdayCN();
-  ['cn', 'en'].forEach(lang => {
-    const buttons = ['start', 'pause', 'stop', 'save', 'again']
-      .map(id => document.getElementById(`${id}-${lang}`));
-    buttons.forEach(button => button.classList.add('hidden'));
-    if (isViewOnly) {
-      document.getElementById(`hint-${lang}`).textContent = '📖 该日期仅可查看回听，补打卡限昨天';
-    } else {
-      buttons[0].classList.remove('hidden');
-      document.getElementById(`hint-${lang}`).textContent = '点击下方按钮开始录音，5 分钟到会自动停止';
-    }
-  });
+  Object.values(state).forEach(rec => rec.render());
 }
 
 function syncCardState(lang, st) {
@@ -236,18 +225,58 @@ function makeRecorder(lang) {
   const tag = document.getElementById(`tag-${lang}`);
 
   const rec = {
+    state: 'idle', starting: false, stopping: false, uploading: false,
     lang, stream: null, recorder: null, chunks: [], timerInt: null, autoStop: null,
     accMs: 0, sessionStart: 0, blob: null, duration: 0, previewUrl: null,
   };
   state[lang] = rec;
 
-  function setTag(cls, text) {
-    tag.className = 'status-tag ' + cls;
-    tag.textContent = text;
-  }
-  function show(...btns) {
-    [startBtn, pauseBtn, stopBtn, saveBtn, againBtn].forEach(b => b.classList.add('hidden'));
-    btns.forEach(b => b.classList.remove('hidden'));
+  rec.render = () => {
+    const viewOnly = currentDate < yesterdayCN();
+    const visible = viewOnly ? [] : {
+      idle: ['start'], saved: ['start'], recording: ['pause', 'stop'],
+      paused: ['pause', 'stop'], recorded: rec.blob?.size > 0 ? ['save', 'again'] : ['again'],
+    }[rec.state];
+    for (const id of ['start', 'pause', 'stop', 'save', 'again']) {
+      const button = document.getElementById(`${id}-${lang}`);
+      button.classList.toggle('hidden', !visible.includes(id));
+      button.disabled = rec.starting || rec.stopping || rec.uploading;
+    }
+    pauseBtn.textContent = rec.state === 'paused'
+      ? (lang === 'cn' ? '▶️ 继续' : '▶️ Resume')
+      : (lang === 'cn' ? '⏸️ 暂停' : '⏸️ Pause');
+  };
+  rec.reset = () => {
+    if (rec.previewUrl) URL.revokeObjectURL(rec.previewUrl);
+    rec.previewUrl = null;
+    preview.classList.add('hidden');
+    preview.src = '';
+    rec.blob = null;
+    rec.chunks = [];
+    rec.duration = 0;
+    rec.state = 'idle';
+    timerEl.textContent = '0:00';
+    timerEl.style.color = '';
+    hintEl.textContent = currentDate < yesterdayCN()
+      ? '📖 该日期仅可查看回听，补打卡限昨天'
+      : '点击下方按钮开始录音，5 分钟到会自动停止';
+    rec.render();
+  };
+  function recordingError(error) {
+    console.error('[audio] 录音失败', error);
+    const recorder = rec.recorder;
+    if (recorder) {
+      recorder.onstop = recorder.ondataavailable = recorder.onerror = null;
+      try { if (recorder.state !== 'inactive') recorder.stop(); } catch (_) {}
+    }
+    clearInterval(rec.timerInt);
+    clearTimeout(rec.autoStop);
+    stopTracks();
+    rec.recorder = null;
+    rec.starting = rec.stopping = false;
+    rec.reset();
+    hintEl.textContent = '录音失败，请检查麦克风后重录';
+    toast(hintEl.textContent);
   }
   function fmt(ms) {
     const s = Math.floor(ms / 1000);
@@ -270,12 +299,14 @@ function makeRecorder(lang) {
   function stopRecording() {
     clearTimeout(rec.autoStop);
     clearInterval(rec.timerInt);
-    if (!rec.recorder || rec.recorder.state === 'inactive') return;
+    if (rec.starting || rec.stopping || !rec.recorder || rec.recorder.state === 'inactive') return;
+    rec.stopping = true;
+    rec.render();
     if (rec.recorder.state === 'recording') {
       rec.accMs = elapsedMs();
       rec.sessionStart = 0;
     }
-    rec.recorder.stop();
+    try { rec.recorder.stop(); } catch (e) { recordingError(e); }
   }
   function stopTracks() {
     if (rec.stream) rec.stream.getTracks().forEach(t => t.stop());
@@ -283,51 +314,70 @@ function makeRecorder(lang) {
   }
 
   startBtn.addEventListener('click', async () => {
+    if (rec.starting || rec.uploading || !['idle', 'saved'].includes(rec.state)) return;
     const isViewOnly = currentDate < yesterdayCN();
     if (isViewOnly) {
       toast('该日期仅可查看，补打卡限昨天');
       return;
     }
+    rec.reset();
+    rec.starting = true;
+    rec.render();
     try {
       rec.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
-      toast('无法使用麦克风，请检查权限设置');
+      rec.starting = false;
+      rec.render();
+      hintEl.textContent = '无法使用麦克风，请检查权限设置';
+      toast(hintEl.textContent);
       return;
     }
-    const types = ['audio/webm', 'audio/mp4', 'audio/ogg'];
-    let mime = '';
-    for (const t of types) { if (MediaRecorder.isTypeSupported(t)) { mime = t; break; } }
-    rec.chunks = [];
-    rec.recorder = new MediaRecorder(rec.stream, mime ? { mimeType: mime } : undefined);
-    rec.recorder.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
-    rec.recorder.onstop = () => {
-      clearInterval(rec.timerInt);
-      clearTimeout(rec.autoStop);
-      stopTracks();
-      rec.blob = new Blob(rec.chunks, { type: rec.recorder.mimeType });
-      rec.duration = Math.round(rec.accMs / 1000);
-      rec.previewUrl = URL.createObjectURL(rec.blob);
-      preview.src = rec.previewUrl;
-      preview.classList.remove('hidden');
-      timerEl.textContent = fmt(rec.duration * 1000);
-      hintEl.textContent = rec.duration >= 5 ? `录了 ${fmt(rec.duration * 1000)}，听听效果，满意就保存 ✅` : '录音太短了，建议重录哦';
-      show(saveBtn, againBtn);
-      setTag('tag-part', '已录音');
-    };
-    rec.accMs = 0;
-    rec.sessionStart = Date.now();
-    rec.recorder.start();
-    rec.timerInt = setInterval(renderTimer, 250);
-    scheduleAutoStop();
-    pauseBtn.textContent = lang === 'cn' ? '⏸️ 暂停' : '⏸️ Pause';
-    show(pauseBtn, stopBtn);
-    setTag('tag-rec', '录音中…');
-    hintEl.textContent = `录音进行中，5:00 自动停止 · 请大声朗读 🗣️`;
-    timerEl.style.color = 'var(--red)';
+    try {
+      const types = ['audio/webm', 'audio/mp4', 'audio/ogg'];
+      let mime = '';
+      for (const t of types) { if (MediaRecorder.isTypeSupported(t)) { mime = t; break; } }
+      rec.chunks = [];
+      rec.recorder = new MediaRecorder(rec.stream, mime ? { mimeType: mime } : undefined);
+      rec.recorder.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+      rec.recorder.onerror = recordingError;
+      rec.recorder.onstop = () => {
+        rec.stopping = false;
+        rec.state = 'recorded';
+        clearInterval(rec.timerInt);
+        clearTimeout(rec.autoStop);
+        stopTracks();
+        rec.blob = new Blob(rec.chunks, { type: rec.recorder.mimeType });
+        rec.duration = Math.round(rec.accMs / 1000);
+        timerEl.style.color = '';
+        if (!rec.blob.size) {
+          hintEl.textContent = '没有录到声音，请重录';
+          toast(hintEl.textContent);
+          rec.render();
+          return;
+        }
+        rec.previewUrl = URL.createObjectURL(rec.blob);
+        preview.src = rec.previewUrl;
+        preview.classList.remove('hidden');
+        timerEl.textContent = fmt(rec.duration * 1000);
+        hintEl.textContent = rec.duration >= 5 ? `录了 ${fmt(rec.duration * 1000)}，听听效果，满意就保存 ✅` : '录音太短了，建议重录哦';
+        rec.render();
+      };
+      rec.accMs = 0;
+      rec.sessionStart = Date.now();
+      rec.recorder.start();
+      rec.timerInt = setInterval(renderTimer, 250);
+      scheduleAutoStop();
+      pauseBtn.textContent = lang === 'cn' ? '⏸️ 暂停' : '⏸️ Pause';
+      rec.starting = false;
+      rec.state = 'recording';
+      rec.render();
+      hintEl.textContent = `录音进行中，5:00 自动停止 · 请大声朗读 🗣️`;
+      timerEl.style.color = 'var(--red)';
+    } catch (e) { recordingError(e); }
   });
 
   pauseBtn.addEventListener('click', () => {
-    if (!rec.recorder) return;
+    if (rec.starting || rec.stopping || !['recording', 'paused'].includes(rec.state) || !rec.recorder) return;
     if (rec.recorder.state === 'recording') {
       rec.accMs = elapsedMs();
       rec.sessionStart = 0;
@@ -337,7 +387,8 @@ function makeRecorder(lang) {
       renderTimer();
       pauseBtn.textContent = lang === 'cn' ? '▶️ 继续' : '▶️ Resume';
       hintEl.textContent = '⏸️ 已暂停，点继续接着读';
-      setTag('tag-part', '已暂停');
+      rec.state = 'paused';
+      rec.render();
     } else if (rec.recorder.state === 'paused') {
       rec.sessionStart = Date.now();
       rec.recorder.resume();
@@ -345,32 +396,34 @@ function makeRecorder(lang) {
       scheduleAutoStop();
       pauseBtn.textContent = lang === 'cn' ? '⏸️ 暂停' : '⏸️ Pause';
       hintEl.textContent = '录音进行中，5:00 自动停止 · 请大声朗读 🗣️';
-      setTag('tag-rec', '录音中…');
+      rec.state = 'recording';
+      rec.render();
     }
   });
 
   stopBtn.addEventListener('click', stopRecording);
 
   againBtn.addEventListener('click', () => {
-    if (rec.previewUrl) URL.revokeObjectURL(rec.previewUrl);
-    preview.classList.add('hidden');
-    preview.src = '';
-    rec.blob = null;
-    timerEl.textContent = '0:00';
-    timerEl.style.color = '';
-    hintEl.textContent = '点击下方按钮开始录音，5 分钟到会自动停止';
-    show(startBtn);
-    setTag('tag-none', '未打卡');
+    if (rec.uploading || rec.state !== 'recorded') return;
+    rec.reset();
   });
 
   saveBtn.addEventListener('click', async () => {
-    if (!rec.blob) return;
-    saveBtn.disabled = true;
+    if (rec.uploading || rec.state !== 'recorded') return;
+    if (!rec.blob || rec.blob.size === 0) {
+      hintEl.textContent = '没有录到声音，请重录';
+      toast(hintEl.textContent);
+      return;
+    }
+    const payload = Object.freeze({ date: currentDate, blob: rec.blob, duration: rec.duration });
+    rec.uploading = true;
+    rec.render();
+    hintEl.textContent = '正在保存，请稍候…';
     try {
-      const upload = () => fetch('/api/audio?lang=' + lang + '&duration=' + rec.duration + '&date=' + encodeURIComponent(currentDate), {
+      const upload = () => fetch('/api/audio?lang=' + lang + '&duration=' + payload.duration + '&date=' + encodeURIComponent(payload.date), {
         method: 'POST',
-        headers: { 'Content-Type': rec.blob.type || 'audio/webm' },
-        body: rec.blob,
+        headers: { 'Content-Type': payload.blob.type || 'audio/webm' },
+        body: payload.blob,
       });
       let res = await upload();
       if (res.status === 401 && window.__checkinUser?.role === 'student') {
@@ -386,16 +439,26 @@ function makeRecorder(lang) {
       toast('保存成功 🎉');
       timerEl.style.color = '';
       preview.classList.add('hidden');
-      show(startBtn);
-      await refreshStatus();
+      rec.state = 'saved';
+      rec.blob = null;
+      rec.chunks = [];
+      hintEl.textContent = '保存成功 ✅，可开始新的录音';
+      rec.render();
+      await refreshStatus().catch(e => {
+        console.error('[audio] 保存成功后刷新失败', e);
+        hintEl.textContent = '录音已保存，但状态刷新失败，请稍后刷新页面';
+      });
       if (data.scoring) {
         renderScore(lang, { enabled: true, score: { status: 'pending' } });
-        loadScore(lang, true, currentDate);
+        loadScore(lang, true, payload.date);
       }
     } catch (e) {
-      toast(e.message || '保存失败，请重试');
+      console.error('[audio] 保存失败', e);
+      hintEl.textContent = '保存失败：' + (e.message || '请重试');
+      toast(hintEl.textContent);
     } finally {
-      saveBtn.disabled = false;
+      rec.uploading = false;
+      rec.render();
     }
   });
 
@@ -404,6 +467,7 @@ function makeRecorder(lang) {
 
 makeRecorder('cn');
 makeRecorder('en');
+Object.values(state).forEach(rec => rec.reset());
 
 // ---------- 日历 ----------
 function shiftMonth(month, offset) {
@@ -413,8 +477,13 @@ function shiftMonth(month, offset) {
 }
 
 async function setCurrentDate(date) {
-  if (!isViewableDate(date)) return;
+  if (!isViewableDate(date) || date === currentDate) return;
+  if (Object.values(state).some(rec => rec.uploading || rec.starting || rec.stopping || ['recording', 'paused', 'recorded'].includes(rec.state))) {
+    toast('请先保存或重录当前录音');
+    return;
+  }
   currentDate = date;
+  Object.values(state).forEach(rec => rec.reset());
   calendarMonth = date.slice(0, 7);
   updateDateHeader();
   await Promise.all([refreshStatus(), loadCalendar()]);

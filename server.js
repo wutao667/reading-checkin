@@ -261,6 +261,7 @@ function readBody(req, limit) {
       chunks.push(c);
     });
     req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('aborted', () => reject(new Error('REQUEST_ABORTED')));
     req.on('error', reject);
   });
 }
@@ -641,16 +642,35 @@ const server = http.createServer(async (req, res) => {
 
       // 上传音频：POST /api/audio?lang=cn|en  body=原始音频字节
       if (p === '/api/audio' && req.method === 'POST') {
-        const u = needLogin(req, res);
-        if (!u) return;
         const lang = url.searchParams.get('lang');
-        if (lang !== 'cn' && lang !== 'en') return json(res, 400, { error: 'lang 参数必须是 cn 或 en' });
         const date = url.searchParams.get('date') || todayStr();
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json(res, 400, { error: '日期格式错误' });
-        if (!isValidCheckinDate(date)) return json(res, 400, { error: '只能补昨天的打卡' });
+        // JSON 编码外部参数，避免换行污染日志；不记录音频内容。
+        let userId = 'anonymous';
+        const logAudio = reason => console.log(`[audio] POST ${reason} userId=${userId} lang=${JSON.stringify(lang)} date=${JSON.stringify(date)}`);
+        logAudio('入口到达');
+        const u = needLogin(req, res);
+        if (!u) { logAudio('拒绝: 未登录'); return; }
+        userId = u.id;
+        logAudio('已认证');
+        const rejectAudio = (reason, status = 400) => {
+          logAudio('拒绝: ' + reason);
+          return json(res, status, { error: reason });
+        };
+        if (lang !== 'cn' && lang !== 'en') return rejectAudio('lang 参数必须是 cn 或 en');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return rejectAudio('日期格式错误');
+        if (!isValidCheckinDate(date)) return rejectAudio('只能补昨天的打卡');
         const dur = parseFloat(url.searchParams.get('duration') || '0');
-        const buf = await readBody(req, MAX_AUDIO_BYTES).catch(() => null);
-        if (!buf || buf.length === 0) return json(res, 400, { error: '音频为空' });
+        if (!Number.isFinite(dur) || dur < 0) return rejectAudio('duration 参数必须是非负有限数值');
+        let buf;
+        try {
+          buf = await readBody(req, MAX_AUDIO_BYTES);
+        } catch (e) {
+          const reason = e.message === 'TOO_LARGE' ? '音频过大' : '音频读取中断';
+          logAudio('拒绝: ' + reason + ' code=' + JSON.stringify(e.code || e.message));
+          if (!res.destroyed) return json(res, e.message === 'TOO_LARGE' ? 413 : 400, { error: reason });
+          return;
+        }
+        if (buf.length === 0) return rejectAudio('音频为空');
 
         const ext = extFromMime(req.headers['content-type']);
         const dir = path.join(UPLOADS, String(u.id), date);
