@@ -12,7 +12,6 @@
     <h1>📚 阅读打卡</h1>
     <div class="right"><button class="btn-link" onclick="location.href='/'">🏠 主页</button><span id="userName"></span><button class="btn-link" onclick="logout()">退出</button></div>
   </div>
-  <p style="color:var(--sub); font-size:14px; margin-bottom:8px;"><span id="dateLabel">今天</span> <b id="today"></b> · 每天中文 + 英文各 5 分钟 🎙️</p>
   <div class="date-bar" id="dateBar">
     <span id="dateBarText"></span>
     <button class="hidden" type="button" id="backToday">返回今天</button>
@@ -346,8 +345,6 @@ function isViewableDate(date) {
 function updateDateHeader() {
   const isToday = currentDate === todayCN();
   const isYesterday = currentDate === yesterdayCN();
-  document.getElementById('dateLabel').textContent = isToday ? '今天' : isYesterday ? '昨天' : '查看日期';
-  document.getElementById('today').textContent = currentDate.replace(/-/g, '.');
   document.getElementById('dateBarText').textContent = isToday
     ? `今天 · ${currentDate}`
     : isYesterday
