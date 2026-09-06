@@ -166,10 +166,10 @@ function idbPrune(username, keep = 5) {
     };
   });
 }
-async function backupAudio(payload) {
+async function backupAudio(payload, uploaded = false) {
   let id;
   try {
-    id = await idbPut({ ...payload, username: user.username, createdAt: Date.now(), uploaded: false });
+    id = await idbPut({ ...payload, username: user.username, createdAt: Date.now(), uploaded });
     await idbPrune(user.username);
   } catch (error) { warnStorage(error); }
   return id;
@@ -439,6 +439,7 @@ function makeRecorder(lang) {
     state: 'idle', starting: false, stopping: false, uploading: false,
     lang, stream: null, recorder: null, chunks: [], timerInt: null, autoStop: null,
     accMs: 0, sessionStart: 0, blob: null, duration: 0, previewUrl: null,
+    localId: null, localBackup: null,
   };
   state[lang] = rec;
 
@@ -463,6 +464,8 @@ function makeRecorder(lang) {
     preview.classList.add('hidden');
     preview.src = '';
     rec.blob = null;
+    rec.localId = null;
+    rec.localBackup = null;
     rec.chunks = [];
     rec.duration = 0;
     rec.state = 'idle';
@@ -566,6 +569,13 @@ function makeRecorder(lang) {
           rec.render();
           return;
         }
+        // 每次停止都留底；重录/reset 后，旧异步结果不能覆盖新录音的 id。
+        const payload = Object.freeze({ lang, date: currentDate, duration: rec.duration, blob: rec.blob });
+        rec.localBackup = backupAudio(payload).then(id => {
+          if (rec.blob === payload.blob) rec.localId = id;
+          refreshLocalRecordings();
+          return id;
+        });
         rec.previewUrl = URL.createObjectURL(rec.blob);
         preview.src = rec.previewUrl;
         preview.classList.remove('hidden');
@@ -630,12 +640,20 @@ function makeRecorder(lang) {
     rec.uploading = true;
     rec.render();
     hintEl.textContent = '正在保存，请稍候…';
-    const localId = await backupAudio(payload);
+    // 等待停止时的入库，快速点保存也不会重复创建记录。
+    let localId = rec.localId ?? await rec.localBackup;
     if (localId != null) localBusy.add(localId);
     refreshLocalRecordings();
     try {
       const data = await uploadAudio(payload);
-      await markLocalUploaded(localId);
+      if (localId != null) {
+        await markLocalUploaded(localId);
+      } else {
+        // 兼容停止时未能备份的情况，上传成功后再尝试留底。
+        localId = await backupAudio(payload, true);
+        rec.localId = localId;
+      }
+      refreshLocalRecordings();
       toast('保存成功 🎉');
       timerEl.style.color = '';
       preview.classList.add('hidden');
