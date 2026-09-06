@@ -410,6 +410,32 @@ function needAdmin(req, res) {
   }
 }
 
+// 覆盖前归档；备份不写入 checkins，不参与 90 天清理，备份清理策略后续另定。
+function archiveOldAudio(oldPath, date, lang) {
+  try {
+    if (!fs.existsSync(oldPath)) return null;
+    const backupDir = path.join(UPLOADS, '_backup', date);
+    fs.mkdirSync(backupDir, { recursive: true });
+    const oldExt = path.extname(oldPath);
+    const stem = `${lang}-${Date.now()}`;
+    let backupFull = path.join(backupDir, `${stem}${oldExt}`);
+    let suffix = 0;
+    while (fs.existsSync(backupFull)) {
+      backupFull = path.join(backupDir, `${stem}-${++suffix}${oldExt}`);
+    }
+    try {
+      fs.renameSync(oldPath, backupFull);
+    } catch (e) {
+      fs.copyFileSync(oldPath, backupFull, fs.constants.COPYFILE_EXCL);
+      fs.unlinkSync(oldPath);
+    }
+    return backupFull;
+  } catch (e) {
+    // 文件缺失或权限等归档失败不阻断上传。
+    return null;
+  }
+}
+
 // ---------- 过期音频清理（保留90天） ----------
 function cleanupOldAudio() {
   const deadline = Date.now() - AUDIO_RETENTION_DAYS * 86400000;
@@ -678,11 +704,12 @@ const server = http.createServer(async (req, res) => {
         const file = path.join(dir, `${lang}.${ext}`);
         const rel = path.relative(ROOT, file);
 
-        // 删除旧的（可能是不同扩展名），并处理记录
+        // 同扩展名或不同扩展名的旧录音都先归档，再写入当前录音。
         const old = db.prepare('SELECT id, cn_path, en_path FROM checkins WHERE user_id = ? AND date = ?').get(u.id, date);
         const oldPath = old && old[`${lang}_path`];
-        if (oldPath && oldPath !== rel) {
-          try { fs.unlinkSync(path.join(ROOT, oldPath)); } catch (e) {}
+        if (oldPath) {
+          const archived = archiveOldAudio(path.join(ROOT, oldPath), date, lang);
+          if (archived) console.log(`[audio] 归档旧录音: ${oldPath} → ${archived}`);
         }
         fs.writeFileSync(file, buf);
         if (ext === 'webm') await fixWebmDuration(file);
