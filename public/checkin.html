@@ -18,12 +18,6 @@
     <button class="hidden" type="button" id="backToday">返回今天</button>
   </div>
 
-  <!-- 今日状态 -->
-  <div class="card">
-    <h2 id="statusTitle">🗓️ 今日打卡</h2>
-    <div id="todayStatus" style="font-size:14px; color:var(--sub);">加载中…</div>
-  </div>
-
   <!-- 中文录音 -->
   <div class="card rec-card" id="card-cn">
     <h2>🇨🇳 中文朗读 <span class="status-tag tag-none" id="tag-cn">未打卡</span></h2>
@@ -354,9 +348,6 @@ function updateDateHeader() {
   const isYesterday = currentDate === yesterdayCN();
   document.getElementById('dateLabel').textContent = isToday ? '今天' : isYesterday ? '昨天' : '查看日期';
   document.getElementById('today').textContent = currentDate.replace(/-/g, '.');
-  document.getElementById('statusTitle').textContent = isToday
-    ? '🗓️ 今日打卡'
-    : isYesterday ? '🗓️ 昨日补打卡' : `📖 查看记录 · ${currentDate}`;
   document.getElementById('dateBarText').textContent = isToday
     ? `今天 · ${currentDate}`
     : isYesterday
@@ -372,10 +363,6 @@ async function refreshStatus() {
   const t = await api('/api/today?date=' + encodeURIComponent(requestedDate));
   if (requestedDate !== currentDate) return;
   updateDateHeader();
-  const parts = [];
-  const cn = t.cn.saved ? `中文 ✅ ${fmtDur(t.cn.duration)}（${fmtTime(t.cn.uploadedAt)}）` : '中文 ⬜ 未打卡';
-  const en = t.en.saved ? `英文 ✅ ${fmtDur(t.en.duration)}（${fmtTime(t.en.uploadedAt)}）` : '英文 ⬜ 未打卡';
-  document.getElementById('todayStatus').textContent = `${cn} ｜ ${en}`;
   syncCardState('cn', t.cn);
   syncCardState('en', t.en);
   loadScore('cn');
@@ -390,10 +377,10 @@ function syncCardState(lang, st) {
   const tag = document.getElementById(`tag-${lang}`);
   const savedInfo = document.getElementById(`saved-${lang}`);
   if (st.saved) {
-    tag.textContent = '已打卡';
+    tag.textContent = `已打卡 · 时长 ${fmtDur(st.duration)} · ${fmtTime(st.uploadedAt)}`;
     tag.className = 'status-tag tag-done';
     const savedSuffix = currentDate < yesterdayCN() ? '' : '（可直接重录覆盖）';
-    savedInfo.textContent = `已保存 · 时长 ${fmtDur(st.duration)} · ${fmtTime(st.uploadedAt)}${savedSuffix} `;
+    savedInfo.textContent = savedSuffix ? `${savedSuffix} ` : '';
     const listenBtn = document.createElement('button');
     listenBtn.type = 'button';
     listenBtn.className = 'btn btn-ghost';

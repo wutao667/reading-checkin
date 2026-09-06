@@ -77,8 +77,10 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 
 /* 打卡卡片 */
 .rec-card { position: relative; }
+.rec-card h2 { gap: 6px; flex-wrap: wrap; white-space: nowrap; }
 .rec-card .status-tag {
-  display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px;
+  display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 6px; border-radius: 20px;
+  flex-shrink: 0; white-space: nowrap;
 }
 .tag-none { background: #f0ece3; color: var(--sub); }
 .tag-done { background: #e3f5ea; color: var(--green); }
