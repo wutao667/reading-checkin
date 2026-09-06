@@ -201,3 +201,14 @@ tr:last-child td { border-bottom: none; }
   font-size: 14px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 99; max-width: 86vw; text-align: center;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 本地录音箱 */
+.audio-box summary { font-size: 17px; font-weight: 700; cursor: pointer; }
+.audio-box-note { color: var(--sub); font-size: 12px; margin: 8px 0; }
+.audio-box-hint { color: #a34824; font-size: 13px; overflow-wrap: anywhere; }
+.audio-box-hint:empty { display: none; }
+#audioBoxList { color: var(--sub); font-size: 13px; }
+.audio-box-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid #efe9dd; }
+.audio-box-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.audio-box-label { flex: 1 1 220px; overflow-wrap: anywhere; }
+.audio-box-row .btn { min-height: 44px; }
