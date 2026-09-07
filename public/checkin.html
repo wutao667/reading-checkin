@@ -178,9 +178,9 @@ async function markLocalUploaded(id) {
   try { await idbMarkUploaded(id); } catch (error) { warnStorage(error); }
 }
 
-// 同一个 90 秒期限覆盖上传、读取回复、401 重登与唯一一次重试。
+// 初始 90 秒预算仍覆盖 401 重登与唯一一次重试；每次音频发送完成后留 60 秒确认。
 async function uploadAudio(payload, onProgress) {
-  const deadline = performance.now() + 90000;
+  let deadline = performance.now() + 90000;
   const timeoutError = () => new DOMException('上传超时', 'AbortError');
   function request(path, options, allow401 = false, reportProgress = false) {
     return new Promise((resolve, reject) => {
@@ -191,12 +191,33 @@ async function uploadAudio(payload, onProgress) {
       // 同源 XHR 默认携带同源 cookie；不启用跨域 credentials。
       xhr.timeout = remaining;
       xhr.setRequestHeader('Content-Type', options.contentType);
-      xhr.ontimeout = xhr.onabort = () => reject(timeoutError());
-      xhr.onerror = () => reject(new TypeError('网络异常'));
-      if (reportProgress && onProgress) {
-        onProgress(0);
+      let timedout = false;
+      let uploadComplete = false;
+      let sentAt;
+      xhr.ontimeout = xhr.onabort = () => {
+        timedout = true;
+        reject(timeoutError());
+      };
+      xhr.onerror = () => {
+        // 某些实现把超时表现为 error；readyState 无法区分，按已知超时标记/期限判定。
+        reject(timedout || performance.now() >= deadline ? timeoutError() : new TypeError('网络异常'));
+      };
+      if (reportProgress) {
+        if (onProgress) onProgress(0);
         xhr.upload.onprogress = e => {
-          if (e.lengthComputable && e.total > 0) onProgress(Math.round(e.loaded / e.total * 100));
+          if (!uploadComplete && e.loaded === e.total && e.total > 0) {
+            uploadComplete = true;
+            const now = performance.now();
+            try {
+              // XHR timeout 始终相对 send 起算，直接设 60000 不会重新计时。
+              // 服务端响应前仍需落盘、ffmpeg 重封装；此处为确认阶段另留 60 秒。
+              xhr.timeout = Math.ceil(now - sentAt) + 60000;
+              deadline = sentAt + xhr.timeout;
+            } catch (_) {
+              // 旧实现若不支持发送中修改 timeout，保留原来的 90 秒总预算。
+            }
+          }
+          if (onProgress && e.lengthComputable && e.total > 0) onProgress(Math.round(e.loaded / e.total * 100));
         };
       }
       xhr.onload = () => {
@@ -222,6 +243,7 @@ async function uploadAudio(payload, onProgress) {
         }
         resolve(data);
       };
+      sentAt = performance.now();
       xhr.send(options.body);
     });
   }
