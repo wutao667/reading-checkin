@@ -63,7 +63,7 @@
 
   <details class="card audio-box" id="audioBox">
     <summary>📦 本地录音箱</summary>
-    <p class="audio-box-note">自动保存最近 5 次录音，网络不好也不怕丢 📦</p>
+    <p class="audio-box-note">自动保存最近 10 次录音，网络不好也不怕丢 📦</p>
     <p class="audio-box-hint" id="audioBoxHint" role="status" aria-live="polite"></p>
     <div id="audioBoxList">加载中…</div>
   </details>
@@ -158,7 +158,7 @@ function idbMarkUploaded(id) {
 function idbDelete(id) {
   return audioTransaction('readwrite', store => { store.delete(id); });
 }
-function idbPrune(username, keep = 5) {
+function idbPrune(username, keep = 10) {
   return audioTransaction('readwrite', store => {
     store.index('username').getAll(username).onsuccess = event => {
       event.target.result.sort(newestFirst).slice(keep).forEach(rec => store.delete(rec.id));
