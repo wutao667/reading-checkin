@@ -172,10 +172,10 @@ async function markLocalUploaded(id) {
   try { await idbMarkUploaded(id); } catch (error) { warnStorage(error); }
 }
 
-// 同一个 25 秒期限覆盖上传、读取回复、401 重登与唯一一次重试。
+// 同一个 90 秒期限覆盖上传、读取回复、401 重登与唯一一次重试。
 async function uploadAudio(payload) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25000);
+  const timer = setTimeout(() => controller.abort(), 90000);
   async function request(path, options, allow401 = false) {
     const res = await fetch(path, { ...options, credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
     let data;
