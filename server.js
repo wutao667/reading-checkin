@@ -21,6 +21,7 @@ const MIN_DURATION = 5 * 60;          // 标准打卡时长 5 分钟（秒）
 const SESSION_TTL = 7 * 24 * 3600 * 1000;  // 登录 7 天
 const BOOST_USERNAME = 'wushuang';
 
+// 仅用于新评分落库；读取接口直接返回 scores.total。
 function displayScore(username, rawTotal) {
   if (username !== BOOST_USERNAME || !Number.isFinite(rawTotal)) return rawTotal;
   return 100 - (100 - rawTotal) * 0.75;
@@ -205,10 +206,14 @@ async function processScoreQueue() {
         catch (error) { lastError = error; if (attempt < 2) await delay(attempt === 0 ? 2000 : 5000); }
       }
       if (!isLatest()) continue;
-      if (result) db.prepare("UPDATE scores SET status='done', total=?, accuracy=?, fluency=?, error=NULL, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
-        .run(result.total, result.accuracy, result.fluency, task.checkinId, task.lang);
-      else db.prepare("UPDATE scores SET status='failed', error=?, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
-        .run(String(lastError?.message || '评分失败').slice(0, 500), task.checkinId, task.lang);
+      if (result) {
+        const total = displayScore(task.username, result.total);
+        db.prepare("UPDATE scores SET status='done', total=?, accuracy=?, fluency=?, error=NULL, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
+          .run(total, result.accuracy, result.fluency, task.checkinId, task.lang);
+      } else {
+        db.prepare("UPDATE scores SET status='failed', error=?, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
+          .run(String(lastError?.message || '评分失败').slice(0, 500), task.checkinId, task.lang);
+      }
     } catch (error) {
       if (isLatest()) db.prepare("UPDATE scores SET status='failed', error=?, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
         .run(String(error.message || error).slice(0, 500), task.checkinId, task.lang);
@@ -619,11 +624,10 @@ const server = http.createServer(async (req, res) => {
         if (u.role !== 'admin' && uid != u.id) return json(res, 403, { error: '没有权限' });
         const month = url.searchParams.get('month') || monthStr();
         const rows = db.prepare(`
-          SELECT c.date, c.cn_duration, c.cn_path, c.en_duration, c.en_path, u.username,
+          SELECT c.date, c.cn_duration, c.cn_path, c.en_duration, c.en_path,
                  CASE WHEN c.cn_duration >= 180 THEN scn.total ELSE NULL END AS cn_score,
                  CASE WHEN c.en_duration >= 180 THEN sen.total ELSE NULL END AS en_score
           FROM checkins c
-          JOIN users u ON u.id = c.user_id
           LEFT JOIN scores scn
             ON scn.checkin_id = c.id AND scn.lang = 'cn' AND scn.status = 'done'
           LEFT JOIN scores sen
@@ -634,10 +638,10 @@ const server = http.createServer(async (req, res) => {
           date: r.date,
           cn: !!r.cn_path,
           cnDuration: r.cn_duration,
-          cnScore: displayScore(r.username, r.cn_score) ?? null,
+          cnScore: r.cn_score ?? null,
           en: !!r.en_path,
           enDuration: r.en_duration,
-          enScore: displayScore(r.username, r.en_score) ?? null,
+          enScore: r.en_score ?? null,
           done: !!(r.cn_path && r.en_path),
         })) });
       }
@@ -653,29 +657,23 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: '月份格式错误' });
         }
         const month = requestedMonth || monthStr();
-        const scoreRows = db.prepare(`
-          SELECT sc.total, u.username
+        const coins = db.prepare(`
+          SELECT
+            SUM(CASE WHEN sc.total >= 90 THEN 1 ELSE 0 END) AS gold,
+            SUM(CASE WHEN sc.total >= 80 AND sc.total < 90 THEN 1 ELSE 0 END) AS silver,
+            SUM(CASE WHEN sc.total < 80 THEN 1 ELSE 0 END) AS bronze
           FROM checkins c
-          JOIN users u ON u.id = c.user_id
           JOIN scores sc ON sc.checkin_id = c.id AND sc.status = 'done'
             AND ((sc.lang = 'cn' AND c.cn_duration >= 180)
               OR (sc.lang = 'en' AND c.en_duration >= 180))
           WHERE c.user_id = ? AND c.date LIKE ?
-        `).all(uid, month + '%');
-        const coins = { gold: 0, silver: 0, bronze: 0 };
-        scoreRows.forEach(row => {
-          const total = displayScore(row.username, row.total);
-          if (!Number.isFinite(total)) return;
-          if (total >= 90) coins.gold++;
-          else if (total >= 80) coins.silver++;
-          else coins.bronze++;
-        });
+        `).get(uid, month + '%');
         return json(res, 200, {
           month,
           userId: Number(uid),
-          gold: coins.gold,
-          silver: coins.silver,
-          bronze: coins.bronze,
+          gold: coins.gold || 0,
+          silver: coins.silver || 0,
+          bronze: coins.bronze || 0,
         });
       }
 
@@ -752,7 +750,7 @@ const server = http.createServer(async (req, res) => {
         }
         json(res, 200, { ok: true, duration: dur, size: buf.length, scoring: ISE_ENABLED && dur >= 180 });
         // 响应已经结束；评分任务的转码、网络请求和重试均不影响打卡保存。
-        if (dur >= 180) enqueueScore({ checkinId, lang, relPath: rel, uploadedAt: now });
+        if (dur >= 180) enqueueScore({ checkinId, username: u.username, lang, relPath: rel, uploadedAt: now });
         return;
       }
 
@@ -762,7 +760,6 @@ const server = http.createServer(async (req, res) => {
         if (!u) return;
         const uid = url.searchParams.get('userId') || u.id;
         if (u.role !== 'admin' && uid != u.id) return json(res, 403, { error: '没有权限' });
-        const targetUser = db.prepare('SELECT username FROM users WHERE id = ?').get(uid);
         const date = url.searchParams.get('date') || todayStr();
         const lang = url.searchParams.get('lang');
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !['cn', 'en'].includes(lang)) return json(res, 400, { error: '参数错误' });
@@ -774,11 +771,7 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { enabled: ISE_ENABLED, score: null, durationShort: true });
         }
         if (!ISE_ENABLED) return json(res, 200, { enabled: false, score: null });
-        const score = row && row.status ? {
-          ...row,
-          total: row.status === 'done' ? displayScore(targetUser && targetUser.username, row.total) : row.total,
-        } : null;
-        return json(res, 200, { enabled: true, score });
+        return json(res, 200, { enabled: true, score: row && row.status ? row : null });
       }
 
       // 播放音频：GET /api/audio/:userId/:date/:lang
@@ -813,26 +806,21 @@ const server = http.createServer(async (req, res) => {
         const to = url.searchParams.get('to') || '2099-12-31';
         let rows;
         if (userId) {
-          rows = db.prepare(`SELECT c.id, c.user_id, c.date, c.cn_duration, c.cn_uploaded_at, c.en_duration, c.en_uploaded_at, u.name, u.username,
+          rows = db.prepare(`SELECT c.id, c.user_id, c.date, c.cn_duration, c.cn_uploaded_at, c.en_duration, c.en_uploaded_at, u.name,
             cn.total cn_score, cn.status cn_score_status, en.total en_score, en.status en_score_status
             FROM checkins c JOIN users u ON u.id = c.user_id
             LEFT JOIN scores cn ON cn.checkin_id=c.id AND cn.lang='cn'
             LEFT JOIN scores en ON en.checkin_id=c.id AND en.lang='en'
             WHERE c.user_id = ? AND c.date BETWEEN ? AND ? ORDER BY c.date DESC, c.user_id`).all(userId, from, to);
         } else {
-          rows = db.prepare(`SELECT c.id, c.user_id, c.date, c.cn_duration, c.cn_uploaded_at, c.en_duration, c.en_uploaded_at, u.name, u.username,
+          rows = db.prepare(`SELECT c.id, c.user_id, c.date, c.cn_duration, c.cn_uploaded_at, c.en_duration, c.en_uploaded_at, u.name,
             cn.total cn_score, cn.status cn_score_status, en.total en_score, en.status en_score_status
             FROM checkins c JOIN users u ON u.id = c.user_id
             LEFT JOIN scores cn ON cn.checkin_id=c.id AND cn.lang='cn'
             LEFT JOIN scores en ON en.checkin_id=c.id AND en.lang='en'
             WHERE c.date BETWEEN ? AND ? ORDER BY c.date DESC, c.user_id`).all(from, to);
         }
-        const records = rows.map(({ username, ...row }) => ({
-          ...row,
-          cn_score: displayScore(username, row.cn_score),
-          en_score: displayScore(username, row.en_score),
-        }));
-        return json(res, 200, { records });
+        return json(res, 200, { records: rows });
       }
 
       // 统计（管理员）
