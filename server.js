@@ -20,6 +20,8 @@ const MAX_AUDIO_BYTES = 100 * 1024 * 1024; // 100MB 上限
 const MIN_DURATION = 5 * 60;          // 标准打卡时长 5 分钟（秒）
 const SESSION_TTL = 7 * 24 * 3600 * 1000;  // 登录 7 天
 const BOOST_USERNAME = 'wushuang';
+const SEGMENT_SECONDS = 10;
+const SEGMENT_COUNT = 3;
 
 // 仅用于新评分落库；读取接口直接返回 scores.total。
 function displayScore(username, rawTotal) {
@@ -89,15 +91,58 @@ function runFile(command, args, options = {}) {
   }));
 }
 
-async function extractVoiceSegment(srcFile, dstWav) {
+function ffprobePath() {
+  if (process.env.FFPROBE_PATH) return process.env.FFPROBE_PATH;
+  const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
+  return path.join(path.dirname(ffmpeg), 'ffprobe');
+}
+
+function computeSegmentStarts(dur, segSeconds = SEGMENT_SECONDS, count = SEGMENT_COUNT) {
+  if (!Number.isFinite(dur) || dur < 0 || !(segSeconds > 0) || !(count > 0)) return [];
+  const last = Math.max(0, dur - segSeconds - 0.2);
+  const starts = [];
+  for (let index = 0; index < count; index++) {
+    let start;
+    if (index === 0) start = 0;
+    else if (index === count - 1) start = last;
+    else start = Math.max(0, (dur - segSeconds) * index / (count - 1));
+    starts.push(start);
+  }
+
+  const unique = [...new Map(starts.map(start => [Math.round(start * 10), start])).values()]
+    .sort((a, b) => a - b);
+  if (dur >= count * segSeconds) return unique;
+
+  // 极短音频的候选窗口可能重叠；只保留互不重叠的窗口，且始终保留第一段。
+  const nonOverlapping = [];
+  for (const start of unique) {
+    if (!nonOverlapping.length || start - nonOverlapping.at(-1) >= segSeconds) nonOverlapping.push(start);
+  }
+  return nonOverlapping.length ? nonOverlapping : [0];
+}
+
+async function probeDuration(srcFile) {
+  try {
+    const { stdout } = await runFile(ffprobePath(), [
+      '-v', 'error', '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1', srcFile,
+    ], { timeout: 15000 });
+    const dur = Number(String(stdout).trim());
+    if (!Number.isFinite(dur) || dur < 0) throw new Error(`无效时长: ${String(stdout).trim()}`);
+    return dur;
+  } catch (error) {
+    throw new Error(`读取音频时长失败: ${error.stderr || error.message}`.slice(0, 500));
+  }
+}
+
+async function extractVoiceSegment(srcFile, dstWav, start) {
   try {
     await runFile(process.env.FFMPEG_PATH || 'ffmpeg', [
       '-y', '-v', 'error', '-i', srcFile,
-      '-af', 'silenceremove=start_periods=1:start_duration=0.1:start_threshold=-40dB',
-      '-t', '10', '-ar', '16000', '-ac', '1', '-sample_fmt', 's16', '-f', 'wav', dstWav,
+      '-ss', String(start), '-t', String(SEGMENT_SECONDS),
+      '-ar', '16000', '-ac', '1', '-sample_fmt', 's16', '-f', 'wav', dstWav,
     ], { timeout: 45000 });
-    // 16kHz / 16bit / mono 的 10 秒数据约 320KB；容许 WAV 头和极小舍入差。
-    return fs.statSync(dstWav).size >= 319000;
+    return fs.statSync(dstWav).size >= 1000;
   } catch (error) {
     fs.promises.unlink(dstWav).catch(() => {});
     throw new Error(`音频转码失败: ${error.stderr || error.message}`.slice(0, 500));
@@ -171,9 +216,60 @@ function evaluateWav(wavPath, lang) {
   });
 }
 
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function scoreRecording(absPath, lang) {
+  const dur = await probeDuration(absPath);
+  const starts = computeSegmentStarts(dur, SEGMENT_SECONDS, SEGMENT_COUNT);
+  const results = [];
+  let validSegments = 0;
+  let lastError;
+
+  for (const start of starts) {
+    const wavPath = path.join(os.tmpdir(), `checkin-ise-${process.pid}-${crypto.randomUUID()}.wav`);
+    try {
+      let enough;
+      try {
+        enough = await extractVoiceSegment(absPath, wavPath, start);
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+      if (!enough) continue;
+      validSegments++;
+
+      let result;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          result = await evaluateWav(wavPath, lang);
+          break;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 2) await delay(attempt === 0 ? 2000 : 5000);
+        }
+      }
+      if (result) results.push({ start, ...result });
+    } finally {
+      await fs.promises.unlink(wavPath).catch(() => {});
+    }
+  }
+
+  if (!results.length) {
+    if (!validSegments && !lastError) {
+      const error = new Error('有效语音不足');
+      error.code = 'NO_VALID_AUDIO';
+      throw error;
+    }
+    throw lastError || new Error('评分失败');
+  }
+  const accuracy = results.reduce((sum, result) => sum + result.accuracy, 0) / results.length;
+  const fluency = results.reduce((sum, result) => sum + result.fluency, 0) / results.length;
+  const total = (accuracy + fluency * 100) / 2;
+  return { accuracy, fluency, total, segments: results };
+}
+
 const scoreQueue = [];
 let scoreWorkerRunning = false;
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 function enqueueScore(task) {
   if (!ISE_ENABLED) return;
   db.prepare(`INSERT INTO scores (checkin_id, lang, status, total, accuracy, fluency, error, scored_at)
@@ -189,35 +285,26 @@ async function processScoreQueue() {
     const task = scoreQueue.shift();
     const current = db.prepare(`SELECT ${task.lang}_path p, ${task.lang}_uploaded_at at FROM checkins WHERE id = ?`).get(task.checkinId);
     if (!current || current.p !== task.relPath || current.at !== task.uploadedAt) continue;
-    const temp = path.join(os.tmpdir(), `checkin-ise-${process.pid}-${crypto.randomUUID()}.wav`);
     const isLatest = () => {
       const row = db.prepare(`SELECT ${task.lang}_path p, ${task.lang}_uploaded_at at FROM checkins WHERE id = ?`).get(task.checkinId);
       return !!row && row.p === task.relPath && row.at === task.uploadedAt;
     };
     try {
-      const enough = await extractVoiceSegment(path.join(ROOT, task.relPath), temp);
-      if (!enough) {
-        if (isLatest()) db.prepare("UPDATE scores SET status='skipped', error='有效语音不足', scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?").run(task.checkinId, task.lang);
-        continue;
-      }
-      let result, lastError;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try { result = await evaluateWav(temp, task.lang); break; }
-        catch (error) { lastError = error; if (attempt < 2) await delay(attempt === 0 ? 2000 : 5000); }
-      }
+      const result = await scoreRecording(path.join(ROOT, task.relPath), task.lang);
       if (!isLatest()) continue;
-      if (result) {
-        const total = displayScore(task.username, result.total);
-        db.prepare("UPDATE scores SET status='done', total=?, accuracy=?, fluency=?, error=NULL, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
-          .run(total, result.accuracy, result.fluency, task.checkinId, task.lang);
+      const total = displayScore(task.username, result.total);
+      db.prepare("UPDATE scores SET status='done', total=?, accuracy=?, fluency=?, error=NULL, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
+        .run(total, result.accuracy, result.fluency, task.checkinId, task.lang);
+    } catch (error) {
+      if (!isLatest()) continue;
+      if (error.code === 'NO_VALID_AUDIO') {
+        db.prepare("UPDATE scores SET status='skipped', error='有效语音不足', scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
+          .run(task.checkinId, task.lang);
       } else {
         db.prepare("UPDATE scores SET status='failed', error=?, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
-          .run(String(lastError?.message || '评分失败').slice(0, 500), task.checkinId, task.lang);
+          .run(String(error.message || error).slice(0, 500), task.checkinId, task.lang);
       }
-    } catch (error) {
-      if (isLatest()) db.prepare("UPDATE scores SET status='failed', error=?, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
-        .run(String(error.message || error).slice(0, 500), task.checkinId, task.lang);
-    } finally { fs.promises.unlink(temp).catch(() => {}); }
+    }
   }
   scoreWorkerRunning = false;
 }
