@@ -178,7 +178,7 @@ async function markLocalUploaded(id) {
   try { await idbMarkUploaded(id); } catch (error) { warnStorage(error); }
 }
 
-// 初始 90 秒预算仍覆盖 401 重登与唯一一次重试；每次音频发送完成后留 60 秒确认。
+// 初始 180 秒预算仍覆盖 401 重登与唯一一次重试；每次音频发送完成后留 120 秒确认。
 async function uploadAudio(payload, onProgress) {
   let deadline = performance.now() + 180000;
   const timeoutError = () => new DOMException('上传超时', 'AbortError');

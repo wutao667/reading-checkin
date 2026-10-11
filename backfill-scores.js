@@ -70,7 +70,7 @@ async function extractVoiceSegment(srcFile, dstWav, ffmpegPath) {
       '-y', '-v', 'error', '-i', srcFile,
       '-af', 'silenceremove=start_periods=1:start_duration=0.1:start_threshold=-40dB',
       '-t', '10', '-ar', '16000', '-ac', '1', '-sample_fmt', 's16', '-f', 'wav', dstWav,
-    ], { timeout: 45000 });
+    ], { timeout: 90000 });
     return fs.statSync(dstWav).size >= 319000;
   } catch (error) {
     fs.promises.unlink(dstWav).catch(() => {});
@@ -120,7 +120,7 @@ function evaluateWav(wavPath, lang, config) {
       try { ws.close(); } catch (_) {}
       error ? reject(error) : resolve(value);
     };
-    const timer = setTimeout(() => finish(new Error('评测超时')), 30000);
+    const timer = setTimeout(() => finish(new Error('评测超时')), 60000);
     ws.addEventListener('message', async event => {
       try {
         const data = JSON.parse(typeof event.data === 'string' ? event.data : await event.data.text());
