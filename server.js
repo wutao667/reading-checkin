@@ -126,7 +126,7 @@ async function probeDuration(srcFile) {
     const { stdout } = await runFile(ffprobePath(), [
       '-v', 'error', '-show_entries', 'format=duration',
       '-of', 'default=noprint_wrappers=1:nokey=1', srcFile,
-    ], { timeout: 15000 });
+    ], { timeout: 30000 });
     const dur = Number(String(stdout).trim());
     if (!Number.isFinite(dur) || dur < 0) throw new Error(`无效时长: ${String(stdout).trim()}`);
     return dur;
@@ -141,7 +141,7 @@ async function extractVoiceSegment(srcFile, dstWav, start) {
       '-y', '-v', 'error', '-i', srcFile,
       '-ss', String(start), '-t', String(SEGMENT_SECONDS),
       '-ar', '16000', '-ac', '1', '-sample_fmt', 's16', '-f', 'wav', dstWav,
-    ], { timeout: 45000 });
+    ], { timeout: 90000 });
     return fs.statSync(dstWav).size >= 1000;
   } catch (error) {
     fs.promises.unlink(dstWav).catch(() => {});
@@ -190,7 +190,7 @@ function evaluateWav(wavPath, lang) {
       try { ws.close(); } catch (_) {}
       error ? reject(error) : resolve(value);
     };
-    const timer = setTimeout(() => finish(new Error('评测超时')), 30000);
+    const timer = setTimeout(() => finish(new Error('评测超时')), 60000);
     ws.addEventListener('message', async event => {
       try {
         const data = JSON.parse(typeof event.data === 'string' ? event.data : await event.data.text());
@@ -371,7 +371,7 @@ function fixWebmDuration(filePath) {
   return new Promise(resolve => {
     execFile(process.env.FFMPEG_PATH || 'ffmpeg', [
       '-y', '-v', 'error', '-i', filePath, '-c', 'copy', '-f', 'webm', tempPath,
-    ], { timeout: 30000 }, err => {
+    ], { timeout: 60000 }, err => {
       if (err) {
         fs.unlink(tempPath, () => resolve(false));
         return;
@@ -948,6 +948,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.requestTimeout = 600000;
+server.headersTimeout = 120000;
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`✅ 阅读打卡服务已启动: http://127.0.0.1:${PORT}`);
   console.log(`   Web 根目录: ${PUBLIC}`);

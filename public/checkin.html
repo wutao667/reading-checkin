@@ -104,7 +104,7 @@ function openAudioDB() {
   if (!dbPromise) dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open('checkin-audio-db', 1);
     let expired = false;
-    const timer = setTimeout(() => { expired = true; reject(new Error('打开本地录音库超时')); }, 3000);
+    const timer = setTimeout(() => { expired = true; reject(new Error('打开本地录音库超时')); }, 6000);
     request.onupgradeneeded = () => {
       const store = request.result.createObjectStore('recordings', { keyPath: 'id', autoIncrement: true });
       store.createIndex('username', 'username');
@@ -129,7 +129,7 @@ async function audioTransaction(mode, action) {
     const timer = setTimeout(() => {
       tx.abort();
       reject(new Error('本地录音操作超时'));
-    }, 3000);
+    }, 6000);
     tx.oncomplete = () => { clearTimeout(timer); resolve(result); };
     tx.onabort = tx.onerror = () => { clearTimeout(timer); reject(tx.error || new Error('本地录音操作失败')); };
     try { action(tx.objectStore('recordings'), value => { result = value; }); }
@@ -180,7 +180,7 @@ async function markLocalUploaded(id) {
 
 // 初始 90 秒预算仍覆盖 401 重登与唯一一次重试；每次音频发送完成后留 60 秒确认。
 async function uploadAudio(payload, onProgress) {
-  let deadline = performance.now() + 90000;
+  let deadline = performance.now() + 180000;
   const timeoutError = () => new DOMException('上传超时', 'AbortError');
   function request(path, options, allow401 = false, reportProgress = false) {
     return new Promise((resolve, reject) => {
@@ -209,12 +209,12 @@ async function uploadAudio(payload, onProgress) {
             uploadComplete = true;
             const now = performance.now();
             try {
-              // XHR timeout 始终相对 send 起算，直接设 60000 不会重新计时。
-              // 服务端响应前仍需落盘、ffmpeg 重封装；此处为确认阶段另留 60 秒。
-              xhr.timeout = Math.ceil(now - sentAt) + 60000;
+              // XHR timeout 始终相对 send 起算，直接设 120000 不会重新计时。
+              // 服务端响应前仍需落盘、ffmpeg 重封装；此处为确认阶段另留 120 秒。
+              xhr.timeout = Math.ceil(now - sentAt) + 120000;
               deadline = sentAt + xhr.timeout;
             } catch (_) {
-              // 旧实现若不支持发送中修改 timeout，保留原来的 90 秒总预算。
+              // 旧实现若不支持发送中修改 timeout，保留原来的 180 秒总预算。
             }
           }
           if (onProgress && e.lengthComputable && e.total > 0) onProgress(Math.round(e.loaded / e.total * 100));
