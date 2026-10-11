@@ -11,19 +11,12 @@ const { DatabaseSync } = require('node:sqlite');
 
 const ROOT = __dirname;
 const DB_PATH = path.join(ROOT, 'data', 'app.db');
-const BOOST_USERNAME = 'wushuang';
 const REQUIRED_ENV = [
   'TENCENT_ISE_APP_ID',
   'TENCENT_ISE_SECRET_ID',
   'TENCENT_ISE_SECRET_KEY',
   'FFMPEG_PATH',
 ];
-
-// 仅用于本次新增或显式重评的评分落库。
-function displayScore(username, rawTotal) {
-  if (username !== BOOST_USERNAME || !Number.isFinite(rawTotal)) return rawTotal;
-  return 100 - (100 - rawTotal) * 0.75;
-}
 
 function fail(message) {
   console.error(`错误：${message}`);
@@ -161,7 +154,7 @@ async function main() {
   };
   const db = new DatabaseSync(DB_PATH);
   try {
-    const rows = db.prepare(`SELECT c.id, c.date, c.cn_path, c.cn_duration, c.en_path, c.en_duration, u.name, u.username
+    const rows = db.prepare(`SELECT c.id, c.date, c.cn_path, c.cn_duration, c.en_path, c.en_duration, u.name
       FROM checkins c LEFT JOIN users u ON u.id = c.user_id
       WHERE (c.cn_path IS NOT NULL OR c.en_path IS NOT NULL)
       ORDER BY c.date, c.id`).all();
@@ -182,7 +175,6 @@ async function main() {
           checkinId: row.id,
           date: row.date,
           name: row.name || `用户${row.id}`,
-          username: row.username,
           lang,
           relPath,
           hasExistingScore: Boolean(existingScore),
@@ -213,7 +205,7 @@ async function main() {
         const enough = await extractVoiceSegment(src, temp, process.env.FFMPEG_PATH.trim());
         if (!enough) throw new Error('有效语音不足');
         const result = await evaluateWav(temp, task.lang, config);
-        const total = displayScore(task.username, result.total);
+        const total = result.total;
         saveDone.run(task.checkinId, task.lang, total, result.accuracy, result.fluency);
         succeeded++;
         console.log(`${prefix} → 总分 ${total}`);

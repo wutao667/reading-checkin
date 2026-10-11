@@ -19,15 +19,8 @@ const AUDIO_RETENTION_DAYS = 90;      // 音频保留 3 个月
 const MAX_AUDIO_BYTES = 100 * 1024 * 1024; // 100MB 上限
 const MIN_DURATION = 5 * 60;          // 标准打卡时长 5 分钟（秒）
 const SESSION_TTL = 7 * 24 * 3600 * 1000;  // 登录 7 天
-const BOOST_USERNAME = 'wushuang';
 const SEGMENT_SECONDS = 10;
 const SEGMENT_COUNT = 3;
-
-// 仅用于新评分落库；读取接口直接返回 scores.total。
-function displayScore(username, rawTotal) {
-  if (username !== BOOST_USERNAME || !Number.isFinite(rawTotal)) return rawTotal;
-  return 100 - (100 - rawTotal) * 0.75;
-}
 
 fs.mkdirSync(DATA, { recursive: true });
 fs.mkdirSync(UPLOADS, { recursive: true });
@@ -292,7 +285,7 @@ async function processScoreQueue() {
     try {
       const result = await scoreRecording(path.join(ROOT, task.relPath), task.lang);
       if (!isLatest()) continue;
-      const total = displayScore(task.username, result.total);
+      const total = result.total;
       db.prepare("UPDATE scores SET status='done', total=?, accuracy=?, fluency=?, error=NULL, scored_at=datetime('now','localtime') WHERE checkin_id=? AND lang=?")
         .run(total, result.accuracy, result.fluency, task.checkinId, task.lang);
     } catch (error) {
@@ -746,9 +739,9 @@ const server = http.createServer(async (req, res) => {
         const month = requestedMonth || monthStr();
         const coins = db.prepare(`
           SELECT
-            SUM(CASE WHEN sc.total >= 90 THEN 1 ELSE 0 END) AS gold,
-            SUM(CASE WHEN sc.total >= 80 AND sc.total < 90 THEN 1 ELSE 0 END) AS silver,
-            SUM(CASE WHEN sc.total < 80 THEN 1 ELSE 0 END) AS bronze
+            SUM(CASE WHEN ROUND(sc.total) >= 90 THEN 1 ELSE 0 END) AS gold,
+            SUM(CASE WHEN ROUND(sc.total) >= 80 AND ROUND(sc.total) < 90 THEN 1 ELSE 0 END) AS silver,
+            SUM(CASE WHEN ROUND(sc.total) < 80 THEN 1 ELSE 0 END) AS bronze
           FROM checkins c
           JOIN scores sc ON sc.checkin_id = c.id AND sc.status = 'done'
             AND ((sc.lang = 'cn' AND c.cn_duration >= 180)
@@ -837,7 +830,7 @@ const server = http.createServer(async (req, res) => {
         }
         json(res, 200, { ok: true, duration: dur, size: buf.length, scoring: ISE_ENABLED && dur >= 180 });
         // 响应已经结束；评分任务的转码、网络请求和重试均不影响打卡保存。
-        if (dur >= 180) enqueueScore({ checkinId, username: u.username, lang, relPath: rel, uploadedAt: now });
+        if (dur >= 180) enqueueScore({ checkinId, lang, relPath: rel, uploadedAt: now });
         return;
       }
 

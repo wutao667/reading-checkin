@@ -339,8 +339,9 @@ async function refreshLocalRecordings() {
 
 function coinTypeFor(score) {
   if (score == null) return null;
-  if (score >= 90) return 'gold';
-  if (score >= 80) return 'silver';
+  const value = Math.round(score);
+  if (value >= 90) return 'gold';
+  if (value >= 80) return 'silver';
   return 'bronze';
 }
 
