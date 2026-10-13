@@ -83,7 +83,7 @@ async function loadRecent() {
   const list = document.getElementById('recentList');
   list.innerHTML = '<div class="recent-message">加载中…</div>';
   try {
-    const data = await fetch('/api/recent?limit=5', { cache: 'no-store' }).then(async res => {
+    const data = await fetch('/api/recent?limit=6', { cache: 'no-store' }).then(async res => {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || '最近动态加载失败');
       return body;
