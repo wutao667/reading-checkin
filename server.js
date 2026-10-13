@@ -655,10 +655,12 @@ const server = http.createServer(async (req, res) => {
 
       // 首页公开最近动态（中英文录音各算一条）
       if (p === '/api/recent' && req.method === 'GET') {
+        const requestedDate = url.searchParams.get('date');
+        const date = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate || '') ? requestedDate : null;
         const requestedLimit = url.searchParams.get('limit');
         const parsedLimit = Number(requestedLimit);
         const limit = requestedLimit === null || !Number.isInteger(parsedLimit) || parsedLimit <= 0
-          ? 5
+          ? 6
           : Math.min(parsedLimit, 20);
         const rows = db.prepare(`
           SELECT recent.name, recent.username, recent.lang, recent.date, recent.at,
@@ -677,9 +679,10 @@ const server = http.createServer(async (req, res) => {
             WHERE c.en_uploaded_at IS NOT NULL
           ) recent
           LEFT JOIN scores ON scores.checkin_id = recent.checkin_id AND scores.lang = recent.lang
+          ${date ? 'WHERE recent.date = ?' : ''}
           ORDER BY recent.at DESC
           LIMIT ?
-        `).all(limit);
+        `).all(...(date ? [date, 50] : [limit]));
         const items = rows.map(row => {
           let medal = null;
           if (row.status === 'done' && row.total != null) {

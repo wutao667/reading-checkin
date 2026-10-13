@@ -167,6 +167,12 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .calendar-message { padding: 24px 0 12px; text-align: center; color: var(--sub); font-size: 13px; }
 
 /* 首页最近动态 */
+.recent-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.recent-heading h2 { margin-bottom: 0; }
+.recent-reset {
+  padding: 0; border: none; background: none; color: var(--sub); font-size: 12px;
+  text-decoration: underline; cursor: pointer;
+}
 .recent-list { display: flex; flex-direction: column; }
 .recent-row {
   display: flex; flex-wrap: wrap; align-items: center; column-gap: 6px; padding: 3px 0;

@@ -51,7 +51,10 @@
   </div>
 
   <div class="card recent-card">
-    <h2>🕒 最近动态</h2>
+    <div class="recent-heading">
+      <h2 id="recentTitle">🕒 最近动态</h2>
+      <button type="button" id="recentReset" class="recent-reset hidden">返回最近</button>
+    </div>
     <div id="recentList" class="recent-list" aria-live="polite">
       <div class="recent-message">加载中…</div>
     </div>
@@ -72,6 +75,8 @@ const password = document.getElementById('password');
 const form = document.getElementById('loginForm');
 const iconByUsername = { wuyou: '🐾', wushuang: '🍐', xiaofan: '⭐' };
 let calendarMonth = thisMonthCN();
+let selectedDate = null;
+let recentRequestId = 0;
 
 function shiftMonth(month, offset) {
   const [year, monthNumber] = month.split('-').map(Number);
@@ -79,17 +84,24 @@ function shiftMonth(month, offset) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
-async function loadRecent() {
+async function loadRecent(date = selectedDate) {
   const list = document.getElementById('recentList');
+  const title = document.getElementById('recentTitle');
+  const reset = document.getElementById('recentReset');
+  const requestId = ++recentRequestId;
+  title.textContent = date ? `🕒 ${date.slice(5)} 打卡记录` : '🕒 最近动态';
+  reset.classList.toggle('hidden', !date);
   list.innerHTML = '<div class="recent-message">加载中…</div>';
   try {
-    const data = await fetch('/api/recent?limit=6', { cache: 'no-store' }).then(async res => {
+    const url = date ? `/api/recent?date=${encodeURIComponent(date)}` : '/api/recent?limit=6';
+    const data = await fetch(url, { cache: 'no-store' }).then(async res => {
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || '最近动态加载失败');
       return body;
     });
+    if (requestId !== recentRequestId) return;
     if (!data.items.length) {
-      list.innerHTML = '<div class="recent-message">还没有打卡动态</div>';
+      list.innerHTML = `<div class="recent-message">${date ? '该日暂无打卡' : '还没有打卡动态'}</div>`;
       return;
     }
     const languageLabels = { cn: '中文', en: '英文' };
@@ -111,6 +123,7 @@ async function loadRecent() {
       return row;
     }));
   } catch (error) {
+    if (requestId !== recentRequestId) return;
     list.innerHTML = '';
     const message = document.createElement('div');
     message.className = 'recent-message';
@@ -145,7 +158,7 @@ async function loadHomeCalendar() {
         const active = status[student.id] === true;
         return `<i class="${active ? 'checked' : 'unchecked'}" title="${student.name}${active ? '已打卡' : '未打卡'}">${icon}</i>`;
       }).join('');
-      html += `<div class="day${date === todayCN() ? ' today' : ''}"><span class="day-number">${day}</span><span class="day-icons">${icons}</span></div>`;
+      html += `<div class="day selectable${date === todayCN() ? ' today' : ''}${date === selectedDate ? ' selected' : ''}" data-date="${date}" role="button" tabindex="0"><span class="day-number">${day}</span><span class="day-icons">${icons}</span></div>`;
     }
     calendar.innerHTML = html + '</div>';
   } catch (error) {
@@ -161,6 +174,26 @@ document.getElementById('calendarPrev').addEventListener('click', () => {
 document.getElementById('calendarNext').addEventListener('click', () => {
   calendarMonth = shiftMonth(calendarMonth, 1);
   loadHomeCalendar();
+});
+document.getElementById('homeCalendar').addEventListener('click', event => {
+  const day = event.target.closest('.day[data-date]');
+  if (!day) return;
+  selectedDate = day.dataset.date;
+  document.querySelectorAll('#homeCalendar .day.selected').forEach(item => item.classList.remove('selected'));
+  day.classList.add('selected');
+  loadRecent(selectedDate);
+});
+document.getElementById('homeCalendar').addEventListener('keydown', event => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const day = event.target.closest('.day[data-date]');
+  if (!day) return;
+  event.preventDefault();
+  day.click();
+});
+document.getElementById('recentReset').addEventListener('click', () => {
+  selectedDate = null;
+  document.querySelectorAll('#homeCalendar .day.selected').forEach(day => day.classList.remove('selected'));
+  loadRecent();
 });
 loadRecent();
 loadHomeCalendar();
