@@ -106,8 +106,7 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .date-bar button { padding: 6px 10px; background: #fff; color: inherit; font-size: 12px; font-weight: 700; }
 
 /* 登录 */
-.login-logo { text-align: center; padding: 34px 0 8px; }
-.login-logo .big { font-size: 52px; }
+.login-logo { text-align: center; padding: 16px 0 8px; }
 .login-logo h1 { font-size: 24px; margin-top: 8px; }
 .login-logo p { color: var(--sub); font-size: 14px; margin-top: 4px; }
 .login-form { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
@@ -166,6 +165,20 @@ button { font-family: inherit; cursor: pointer; border: none; border-radius: 12p
 .day-icons i { font-style: normal; font-size: 11px; line-height: 1.25; text-align: center; }
 .day-icons i.unchecked { filter: grayscale(1); opacity: .16; }
 .calendar-message { padding: 24px 0 12px; text-align: center; color: var(--sub); font-size: 13px; }
+
+/* 首页最近动态 */
+.recent-list { display: flex; flex-direction: column; }
+.recent-row {
+  display: flex; flex-wrap: wrap; align-items: center; padding: 9px 0;
+  border-bottom: 1px solid #efe9dd;
+  font-size: 13px;
+}
+.recent-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.recent-row span:first-child { color: var(--sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.recent-row span { white-space: nowrap; }
+.recent-row span + span { margin-left: 8px; }
+.recent-row span + span::before { content: "·"; margin-right: 8px; color: var(--sub); }
+.recent-message { padding: 12px 0 2px; color: var(--sub); font-size: 13px; text-align: center; }
 
 /* 表格 */
 table { width: 100%; border-collapse: collapse; font-size: 14px; }

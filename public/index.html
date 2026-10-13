@@ -9,7 +9,6 @@
 <body>
 <div class="container">
   <div class="login-logo">
-    <div class="big">📚</div>
     <h1>花果山阅读打卡</h1>
     <p>每天中文 5 分钟 + 英文 5 分钟</p>
   </div>
@@ -37,6 +36,13 @@
       <button class="btn btn-orange btn-block" type="submit">进入后台</button>
       <button class="btn btn-ghost btn-block" type="button" id="backBtn">← 返回</button>
     </form>
+  </div>
+
+  <div class="card recent-card">
+    <h2>🕒 最近动态</h2>
+    <div id="recentList" class="recent-list" aria-live="polite">
+      <div class="recent-message">加载中…</div>
+    </div>
   </div>
 
   <div class="card home-calendar-card">
@@ -71,6 +77,46 @@ function shiftMonth(month, offset) {
   const [year, monthNumber] = month.split('-').map(Number);
   const date = new Date(year, monthNumber - 1 + offset, 1);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function loadRecent() {
+  const list = document.getElementById('recentList');
+  list.innerHTML = '<div class="recent-message">加载中…</div>';
+  try {
+    const data = await fetch('/api/recent?limit=5', { cache: 'no-store' }).then(async res => {
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || '最近动态加载失败');
+      return body;
+    });
+    if (!data.items.length) {
+      list.innerHTML = '<div class="recent-message">还没有打卡动态</div>';
+      return;
+    }
+    const languageLabels = { cn: '中文', en: '英文' };
+    const medalLabels = { gold: '🥇 金牌', silver: '🥈 银牌', bronze: '🥉 铜牌' };
+    list.replaceChildren(...data.items.map(item => {
+      const date = new Date(item.at);
+      const pad = value => String(value).padStart(2, '0');
+      const time = Number.isNaN(date.getTime())
+        ? '时间未知'
+        : `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      const row = document.createElement('div');
+      row.className = 'recent-row';
+      [time, item.name, languageLabels[item.lang] || item.lang, medalLabels[item.medal] || '（未评分）']
+        .forEach(value => {
+          const span = document.createElement('span');
+          span.textContent = value;
+          row.appendChild(span);
+        });
+      return row;
+    }));
+  } catch (error) {
+    list.innerHTML = '';
+    const message = document.createElement('div');
+    message.className = 'recent-message';
+    message.textContent = `最近动态暂时无法加载：${error.message}`;
+    list.appendChild(message);
+  }
 }
 
 async function loadHomeCalendar() {
@@ -116,6 +162,7 @@ document.getElementById('calendarNext').addEventListener('click', () => {
   calendarMonth = shiftMonth(calendarMonth, 1);
   loadHomeCalendar();
 });
+loadRecent();
 loadHomeCalendar();
 
 // 学生：点击头像直接进入（免密）

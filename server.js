@@ -653,6 +653,44 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { month, students, days });
       }
 
+      // 首页公开最近动态（中英文录音各算一条）
+      if (p === '/api/recent' && req.method === 'GET') {
+        const requestedLimit = url.searchParams.get('limit');
+        const parsedLimit = Number(requestedLimit);
+        const limit = requestedLimit === null || !Number.isInteger(parsedLimit) || parsedLimit <= 0
+          ? 5
+          : Math.min(parsedLimit, 20);
+        const rows = db.prepare(`
+          SELECT recent.name, recent.username, recent.lang, recent.date, recent.at,
+                 scores.status, scores.total
+          FROM (
+            SELECT c.id AS checkin_id, u.name, u.username, 'cn' AS lang,
+                   c.date, c.cn_uploaded_at AS at
+            FROM checkins c
+            JOIN users u ON u.id = c.user_id
+            WHERE c.cn_uploaded_at IS NOT NULL
+            UNION ALL
+            SELECT c.id AS checkin_id, u.name, u.username, 'en' AS lang,
+                   c.date, c.en_uploaded_at AS at
+            FROM checkins c
+            JOIN users u ON u.id = c.user_id
+            WHERE c.en_uploaded_at IS NOT NULL
+          ) recent
+          LEFT JOIN scores ON scores.checkin_id = recent.checkin_id AND scores.lang = recent.lang
+          ORDER BY recent.at DESC
+          LIMIT ?
+        `).all(limit);
+        const items = rows.map(row => {
+          let medal = null;
+          if (row.status === 'done' && row.total != null) {
+            const displayScore = Math.round(row.total);
+            medal = displayScore >= 90 ? 'gold' : displayScore >= 80 ? 'silver' : 'bronze';
+          }
+          return { ...row, total: row.total ?? null, status: row.status ?? null, medal };
+        });
+        return json(res, 200, { items });
+      }
+
       // 修改密码（本人或管理员代改）
       if (p === '/api/password' && req.method === 'POST') {
         const u = needLogin(req, res);
